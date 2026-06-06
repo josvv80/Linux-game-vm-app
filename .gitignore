@@ -5,3 +5,5 @@ coverage/
 data/
 .agents/
 .codex/
+bin/
+obj/

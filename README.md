@@ -29,7 +29,7 @@ The current repo implements the first vertical slice of the host-side control pl
   - game launch
   - stream-ready transition
   - session termination
-- managed VM provider scaffold that preserves the runtime interface and surfaces not-yet-implemented VM/guest actions cleanly
+- managed VM provider path that can now talk to a guest-agent HTTP contract for health, scan, launch, and terminate actions
 - `host-api` Fastify server with REST and WebSocket updates
 - `host-web` React/Vite dashboard for:
   - runtime controls
@@ -37,6 +37,7 @@ The current repo implements the first vertical slice of the host-side control pl
   - game catalog browsing
   - launch actions
   - session timeline visibility
+- `guest/windows-agent` .NET 10 scaffold with contract endpoints, in-memory catalog/session state, and SSE event streaming
 
 This slice is intentionally fake on the runtime side so the host control plane can be validated before real VM/VFIO automation and the Windows agent are built.
 
@@ -107,7 +108,7 @@ Useful host API routes:
 ## Next Steps
 
 1. Implement the real Windows guest agent behind the documented contract in `guest/windows-agent/CONTRACT.md`.
-2. Replace the managed VM scaffold with libvirt/QEMU lifecycle control and guest-agent HTTP communication.
+2. Replace the managed VM scaffold with libvirt/QEMU lifecycle control and consume the guest-agent event stream from the host.
 3. Implement the real Steam integration and one additional launcher.
 4. Add diagnostics and recovery flows for the eventual single-GPU VFIO provider.
 5. Decide whether configuration should stay file-based only or also gain a richer persisted state store.

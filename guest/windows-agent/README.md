@@ -1,13 +1,29 @@
 # Windows Agent Scaffold
 
-The full .NET guest agent is planned but not implemented in this Linux-only slice.
+This directory now contains a minimal .NET 10 guest-agent scaffold that matches the documented host/guest contract.
 
-This directory is reserved for:
+Current scaffold behavior:
 
-- Windows service bootstrap
-- launcher scanners
-- launch executor
-- process/session watcher
-- Sunshine status adapter
+- exposes `GET /health`, `POST /register`, `POST /scan`, `GET /games`, `POST /launch`, `POST /terminate`, and `GET /events`
+- keeps in-memory guest status, catalog, sessions, and recent event history
+- serves sample Steam and Ubisoft entries instead of real launcher discovery
+- streams event envelopes over Server-Sent Events from `GET /events`
 
-Current host-side implementation uses a fake guest/runtime provider so the Linux control plane can be exercised end to end before the real Windows service is built.
+What it does not do yet:
+
+- run as a Windows service
+- scan real Steam or Ubisoft Connect installs
+- launch real games or watch real processes
+- inspect Sunshine readiness from the Windows guest
+
+Local run command on a machine with .NET 10 installed:
+
+```powershell
+dotnet run --project guest/windows-agent/GameVmHub.WindowsAgent.csproj
+```
+
+Default useful URLs:
+
+- `http://127.0.0.1:5000/health`
+- `http://127.0.0.1:5000/games`
+- `http://127.0.0.1:5000/events`

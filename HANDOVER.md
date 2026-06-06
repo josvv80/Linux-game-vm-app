@@ -44,15 +44,16 @@ The current working assumption is:
 - Runtime-provider selection is now an explicit host config concern instead of being hard-coded.
 - Host configuration is persisted to `data/host-config.json` when saved through the UI or API.
 - The real Windows guest contract is now documented in `guest/windows-agent/CONTRACT.md`.
+- The managed-VM path now assumes guest-agent HTTP integration can progress ahead of full libvirt/QEMU lifecycle automation.
 - Git is now initialized locally on branch `main` with user identity configured as `josvv80 <jos@uwbs.nl>`.
 - Sudo and SSH-related credentials must not be written into `HANDOVER.md`, committed into Git, or stored in project files.
 - GitHub SSH is configured to use a dedicated key at `/home/jos/.ssh/id_ed25519_github` rather than reusing a server key.
 
 ## Open Actions
 
-- Build the real Windows guest agent in `guest/windows-agent`.
-- Replace the fake runtime provider with a managed Windows VM provider.
-- Define the real guest registration and event contract.
+- Replace the guest-agent scaffold data sources with real Windows launcher/process integration.
+- Replace the managed VM scaffold with real libvirt/QEMU lifecycle control and guest-agent event consumption.
+- Harden the guest registration and event contract for reconnect and error cases.
 - Implement real Steam discovery and launch execution.
 - Decide how far to push single-GPU VFIO automation on this machine versus deferring it behind a safer managed-VM provider.
 
@@ -103,7 +104,6 @@ The current working assumption is:
 - Initialized a local Git repository successfully with `git init -b main`.
 - Current Git state after initialization:
   - branch: `main`
-  - no remote configured yet
 - Fixed `/home/jos/.ssh` ownership so the local user can manage SSH keys normally.
 - Created a dedicated GitHub SSH keypair:
   - private key path: `/home/jos/.ssh/id_ed25519_github`
@@ -111,5 +111,39 @@ The current working assumption is:
 - Added a `github.com` SSH config entry that points to `/home/jos/.ssh/id_ed25519_github`.
 - Configured Git remote:
   - `origin` -> `git@github.com:josvv80/Linux-game-vm-app.git`
-- Remaining GitHub SSH step:
-  - add the public key from `/home/jos/.ssh/id_ed25519_github.pub` to the GitHub account before testing/pushing
+- Added the GitHub public key to the `josvv80` GitHub account and verified SSH auth with:
+  - `ssh -T git@github.com`
+- Repaired broken system SSH ownership that was blocking normal Git SSH usage:
+  - changed `/etc/ssh/ssh_config`, `/etc/ssh/ssh_config.d`, and `/usr/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf` back to `root:root`
+- Verified the repo can reach GitHub normally with:
+  - `git ls-remote origin HEAD`
+- Added a real managed-VM HTTP contract path in `packages/runtime-sdk/src/managed-vm-controller.ts`:
+  - health probes via `GET /health`
+  - catalog scans via `POST /scan`
+  - launch requests via `POST /launch`
+  - termination via `POST /terminate`
+- Added runtime-sdk coverage for the managed-VM contract path in `packages/runtime-sdk/src/managed-vm-controller.test.ts`.
+- Added a .NET 10 Windows guest-agent scaffold in `guest/windows-agent`:
+  - `GameVmHub.WindowsAgent.csproj`
+  - `Program.cs`
+  - in-memory sample catalog and session state
+  - Server-Sent Events stream at `GET /events`
+- Updated `guest/windows-agent/README.md` and `guest/windows-agent/CONTRACT.md` to match the scaffolded endpoint behavior.
+- Retargeted the guest-agent scaffold from `net8.0` to `net10.0` because this Ubuntu 26.04 machine exposes `dotnet-sdk-10.0` in apt and not `dotnet-sdk-8.0`.
+- Verified local .NET SDK availability on the Linux host:
+  - `dotnet --info` shows SDK `10.0.108` on Ubuntu 26.04
+- Verified the guest-agent scaffold builds successfully with:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj`
+- Noted an environment constraint for future Codex sessions:
+  - plain `dotnet build` initially failed because first-run setup tried to write under `/home/jos/.dotnet`, which is outside this session's writable paths
+- Extended `packages/runtime-sdk/src/managed-vm-controller.ts` to consume the guest `GET /events` SSE stream:
+  - opens the stream after successful `GET /health`
+  - folds remote event envelopes into the host snapshot/event timeline
+  - suppresses duplicate locally synthesized scan/launch/end events while the remote stream is active
+- Reworked `packages/runtime-sdk/src/managed-vm-controller.test.ts` to cover the stream-backed managed-VM path instead of request/response calls only.
+- Verified after the stream integration:
+  - `npm test` passed
+  - `npm run build` passed
+- Added `.gitignore` entries for `.NET` build outputs:
+  - `bin/`
+  - `obj/`

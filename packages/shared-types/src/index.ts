@@ -142,6 +142,17 @@ export interface GuestAgentHealthResponse {
   status: GuestStatusSnapshot;
 }
 
+export interface GuestAgentRegisterRequest {
+  guestName: string;
+  agentVersion: string;
+}
+
+export interface GuestAgentRegisterResponse {
+  ok: boolean;
+  registeredAt: string;
+  guestName: string;
+}
+
 export interface GuestAgentGameListResponse {
   games: GameRecord[];
   scannedAt: string;
@@ -153,6 +164,10 @@ export interface GuestAgentLaunchRequest {
 
 export interface GuestAgentLaunchResponse {
   session: GameSession;
+}
+
+export interface GuestAgentTerminateRequest {
+  sessionId: string;
 }
 
 export interface GuestAgentEventEnvelope {

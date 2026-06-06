@@ -7,18 +7,22 @@ The real Windows agent is not implemented yet, but the host-side contract is now
 - `GET /health`
   - returns guest identity, agent version, and current `GuestStatusSnapshot`
 - `POST /register`
+  - accepts `GuestAgentRegisterRequest`
   - guest announces itself to the host control plane
 - `POST /scan`
   - triggers launcher scanning in the guest
+  - returns `GuestAgentGameListResponse`
 - `GET /games`
-  - returns normalized `GameRecord[]`
+  - returns `GuestAgentGameListResponse`
 - `POST /launch`
   - accepts `GuestAgentLaunchRequest`
   - returns `GuestAgentLaunchResponse`
 - `POST /terminate`
+  - accepts `GuestAgentTerminateRequest`
   - terminates the active session by session id
 - `GET /events`
   - streams `GuestAgentEventEnvelope` messages
+  - current scaffold uses Server-Sent Events
 
 ## Required Behavior
 

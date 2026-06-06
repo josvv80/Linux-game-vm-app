@@ -11,6 +11,7 @@ Track the setup, design decisions, experiments, and next actions for the Game VM
 - Treat `HANDOVER.md` as mandatory project memory.
 - Update this file after every relevant code change, architecture decision, prototype result, test run, or blocker.
 - Record what changed, what was verified, and what remains open so a later session can continue without re-discovery.
+- Do not store secrets in this file or anywhere else in the repo. This includes sudo passwords, API keys, tokens, private SSH keys, and credential material. Enter sensitive credentials interactively or keep them in a dedicated secret manager outside the project tree.
 
 ## Project Summary
 
@@ -44,6 +45,8 @@ The current working assumption is:
 - Host configuration is persisted to `data/host-config.json` when saved through the UI or API.
 - The real Windows guest contract is now documented in `guest/windows-agent/CONTRACT.md`.
 - Git is now initialized locally on branch `main` with user identity configured as `josvv80 <jos@uwbs.nl>`.
+- Sudo and SSH-related credentials must not be written into `HANDOVER.md`, committed into Git, or stored in project files.
+- GitHub SSH is configured to use a dedicated key at `/home/jos/.ssh/id_ed25519_github` rather than reusing a server key.
 
 ## Open Actions
 
@@ -101,3 +104,12 @@ The current working assumption is:
 - Current Git state after initialization:
   - branch: `main`
   - no remote configured yet
+- Fixed `/home/jos/.ssh` ownership so the local user can manage SSH keys normally.
+- Created a dedicated GitHub SSH keypair:
+  - private key path: `/home/jos/.ssh/id_ed25519_github`
+  - public key path: `/home/jos/.ssh/id_ed25519_github.pub`
+- Added a `github.com` SSH config entry that points to `/home/jos/.ssh/id_ed25519_github`.
+- Configured Git remote:
+  - `origin` -> `git@github.com:josvv80/Linux-game-vm-app.git`
+- Remaining GitHub SSH step:
+  - add the public key from `/home/jos/.ssh/id_ed25519_github.pub` to the GitHub account before testing/pushing

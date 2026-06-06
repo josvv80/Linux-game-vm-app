@@ -147,3 +147,9 @@ The current working assumption is:
 - Added `.gitignore` entries for `.NET` build outputs:
   - `bin/`
   - `obj/`
+- Pushed backup branch to GitHub before reconciling `main`:
+  - `origin/codex-checkpoint-2026-06-06`
+- Began non-destructive reconciliation of local `main` with `origin/main`:
+  - fetched the unrelated remote root commit
+  - merged with `--allow-unrelated-histories`
+  - resolved the `README.md` add/add conflict in favor of the current project README

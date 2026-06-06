@@ -2,11 +2,62 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "./create-app.js";
 import { AppState } from "./state.js";
 import { ConfigStore, defaultHostConfig } from "./config-store.js";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type {
+  GameRecord,
+  GameSession,
+  GuestAgentEventEnvelope,
+  GuestAgentGameListResponse,
+  GuestAgentHealthResponse,
+  GuestAgentLaunchResponse,
+  GuestStatusSnapshot,
+  HostConfig,
+  SessionEvent,
+} from "@game-vm-hub/shared-types";
+import { ManagedVmController } from "@game-vm-hub/runtime-sdk";
 
 const apps: Array<ReturnType<typeof buildApp>> = [];
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+}
+
+function createEventStream() {
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(nextController) {
+      controller = nextController;
+    },
+    cancel() {
+      controller = null;
+    },
+  });
+
+  return {
+    response: new Response(stream, {
+      status: 200,
+      headers: {
+        "content-type": "text/event-stream",
+      },
+    }),
+    emit(envelope: GuestAgentEventEnvelope) {
+      controller?.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(envelope)}\n\n`));
+    },
+    close() {
+      controller?.close();
+      controller = null;
+    },
+  };
+}
 
 afterEach(async () => {
   while (apps.length > 0) {
@@ -82,5 +133,259 @@ describe("host API", () => {
         guestAgentBaseUrl: "http://192.168.1.20:8765",
       },
     });
+  });
+
+  it("exercises managed-vm endpoints against the guest-agent contract", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+
+    const managedConfig: HostConfig = {
+      runtimeProvider: "managed-vm",
+      managedVm: {
+        vmName: "windows-vfio",
+        guestAgentBaseUrl: "http://127.0.0.1:8765",
+        streamMode: "sunshine-moonlight",
+      },
+    };
+
+    const stream = createEventStream();
+    const calls: Array<{ path: string; method: string; body: string | null }> = [];
+    const games: GameRecord[] = [
+      {
+        id: "steam:app-400",
+        title: "Portal",
+        launcher: "steam",
+        installState: "installed",
+        launchCommandRef: "steam://run/400",
+        lastSeenAt: "2026-06-06T10:00:00.000Z",
+        compatibilityFlags: ["prototype"],
+        guestMetadata: {
+          installRoot: "C:\\Program Files (x86)\\Steam",
+          launcherAppId: "400",
+        },
+      },
+    ];
+
+    const baseStatus: GuestStatusSnapshot = {
+      guestPowerState: "running",
+      agentState: "ready",
+      streamHostState: "ready",
+      scanState: "idle",
+      warnings: [],
+      connectedGuestName: "Windows Gaming VM",
+    };
+
+    const emitEvent = (
+      event: SessionEvent,
+      statusPatch: Partial<GuestStatusSnapshot> = {},
+    ) => {
+      stream.emit({
+        event,
+        status: {
+          ...baseStatus,
+          ...statusPatch,
+        },
+      });
+    };
+
+    const health: GuestAgentHealthResponse = {
+      guestName: "Windows Gaming VM",
+      agentVersion: "0.1.0",
+      status: baseStatus,
+    };
+
+    const runningSession: GameSession = {
+      id: "session-1",
+      gameId: "steam:app-400",
+      runtimeState: "running",
+      guestState: "ready",
+      streamState: "ready",
+      startedAt: "2026-06-06T10:01:00.000Z",
+    };
+
+    const terminatedSession: GameSession = {
+      ...runningSession,
+      runtimeState: "terminated",
+      endedAt: "2026-06-06T10:02:00.000Z",
+      streamState: "unavailable",
+    };
+
+    const runtimeFactory = (config: HostConfig) =>
+      new ManagedVmController(config, {
+        fetchImpl: async (input, init) => {
+          const url =
+            typeof input === "string"
+              ? new URL(input)
+              : input instanceof URL
+                ? input
+                : new URL(input.url);
+          const method = init?.method ?? "GET";
+          const body = typeof init?.body === "string" ? init.body : null;
+
+          calls.push({
+            path: url.pathname,
+            method,
+            body,
+          });
+
+          if (url.pathname === "/health") {
+            return jsonResponse(health);
+          }
+
+          if (url.pathname === "/events") {
+            return stream.response;
+          }
+
+          if (url.pathname === "/scan") {
+            emitEvent(
+              {
+                id: "event-scan-start",
+                type: "guest.scan.started",
+                level: "info",
+                createdAt: "2026-06-06T10:00:10.000Z",
+                message: "Guest launcher scan started.",
+              },
+              {
+                agentState: "scanning",
+                scanState: "running",
+              },
+            );
+
+            emitEvent(
+              {
+                id: "event-scan-complete",
+                type: "guest.scan.completed",
+                level: "info",
+                createdAt: "2026-06-06T10:00:20.000Z",
+                message: "Guest launcher scan completed.",
+              },
+              {
+                scanState: "complete",
+              },
+            );
+
+            const response: GuestAgentGameListResponse = {
+              games,
+              scannedAt: "2026-06-06T10:00:30.000Z",
+            };
+            return jsonResponse(response);
+          }
+
+          if (url.pathname === "/launch") {
+            emitEvent(
+              {
+                id: "event-launch",
+                type: "session.launch.started",
+                level: "info",
+                createdAt: "2026-06-06T10:01:00.000Z",
+                message: "Launch accepted for Portal.",
+                gameId: "steam:app-400",
+                sessionId: "session-1",
+              },
+              {
+                activeSessionId: "session-1",
+              },
+            );
+
+            emitEvent(
+              {
+                id: "event-stream-ready",
+                type: "session.streaming.ready",
+                level: "info",
+                createdAt: "2026-06-06T10:01:05.000Z",
+                message: "Guest stream path is ready.",
+                gameId: "steam:app-400",
+                sessionId: "session-1",
+              },
+              {
+                activeSessionId: "session-1",
+              },
+            );
+
+            const response: GuestAgentLaunchResponse = {
+              session: runningSession,
+            };
+            return jsonResponse(response);
+          }
+
+          if (url.pathname === "/terminate") {
+            emitEvent(
+              {
+                id: "event-ended",
+                type: "session.ended",
+                level: "info",
+                createdAt: "2026-06-06T10:02:00.000Z",
+                message: "Guest session terminated.",
+                gameId: "steam:app-400",
+                sessionId: "session-1",
+              },
+              {
+                streamHostState: "ready",
+              },
+            );
+
+            return jsonResponse(terminatedSession);
+          }
+
+          return jsonResponse({ message: "Not found" }, 404);
+        },
+      });
+
+    await mkdir(dir, { recursive: true });
+    await writeFile(configPath, `${JSON.stringify(managedConfig, null, 2)}\n`, "utf8");
+
+    const app = buildApp(
+      new AppState(new ConfigStore(configPath), defaultHostConfig, runtimeFactory),
+    );
+    apps.push(app);
+
+    const startResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/start",
+    });
+    expect(startResponse.statusCode).toBe(200);
+    expect(startResponse.json().guestPowerState).toBe("running");
+
+    const scanResponse = await app.inject({
+      method: "POST",
+      url: "/api/catalog/scan",
+    });
+    expect(scanResponse.statusCode).toBe(200);
+    expect(scanResponse.json()).toHaveLength(1);
+
+    const launchResponse = await app.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: {
+        gameId: "steam:app-400",
+      },
+    });
+    expect(launchResponse.statusCode).toBe(200);
+    expect(launchResponse.json().session.id).toBe("session-1");
+
+    const terminateResponse = await app.inject({
+      method: "POST",
+      url: "/api/sessions/session-1/terminate",
+    });
+    expect(terminateResponse.statusCode).toBe(200);
+    expect(terminateResponse.json().runtimeState).toBe("terminated");
+
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: "/api/sessions",
+    });
+    expect(sessionsResponse.statusCode).toBe(200);
+    expect(sessionsResponse.json()).toHaveLength(1);
+    expect(sessionsResponse.json()[0].runtimeState).toBe("terminated");
+
+    expect(calls).toEqual([
+      { path: "/health", method: "GET", body: null },
+      { path: "/events", method: "GET", body: null },
+      { path: "/scan", method: "POST", body: null },
+      { path: "/launch", method: "POST", body: JSON.stringify({ gameId: "steam:app-400" }) },
+      { path: "/terminate", method: "POST", body: JSON.stringify({ sessionId: "session-1" }) },
+    ]);
+
+    stream.close();
   });
 });

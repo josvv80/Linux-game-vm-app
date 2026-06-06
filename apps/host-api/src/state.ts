@@ -6,7 +6,11 @@ import type {
   SessionEvent,
 } from "@game-vm-hub/shared-types";
 import { ConfigStore, defaultHostConfig } from "./config-store.js";
-import { createRuntimeController, type RuntimeController } from "./runtime-controller-factory.js";
+import {
+  createRuntimeController,
+  type RuntimeController,
+  type RuntimeControllerFactory,
+} from "./runtime-controller-factory.js";
 
 export class AppState {
   private controller: RuntimeController;
@@ -18,16 +22,17 @@ export class AppState {
   constructor(
     private readonly configStore = new ConfigStore("data/host-config.json"),
     initialConfig: HostConfig = defaultHostConfig,
+    private readonly runtimeControllerFactory: RuntimeControllerFactory = createRuntimeController,
   ) {
     this.config = initialConfig;
-    this.controller = createRuntimeController(initialConfig);
+    this.controller = this.runtimeControllerFactory(initialConfig);
     this.bindController();
     this.ready = this.initialize();
   }
 
   private async initialize() {
     this.config = await this.configStore.read();
-    this.setController(createRuntimeController(this.config));
+    this.setController(this.runtimeControllerFactory(this.config));
   }
 
   private bindController() {
@@ -110,7 +115,7 @@ export class AppState {
   async updateConfig(patch: HostConfigPatch) {
     await this.ensureReady();
     this.config = await this.configStore.write(patch);
-    this.setController(createRuntimeController(this.config));
+    this.setController(this.runtimeControllerFactory(this.config));
     return this.getConfig();
   }
 

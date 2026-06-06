@@ -11,6 +11,7 @@ Track the setup, design decisions, experiments, and next actions for the Game VM
 - Treat `HANDOVER.md` as mandatory project memory.
 - Update this file after every relevant code change, architecture decision, prototype result, test run, or blocker.
 - Record what changed, what was verified, and what remains open so a later session can continue without re-discovery.
+- Keep Git updated with local commits and remote pushes when a meaningful checkpoint or risky transition justifies it.
 - Do not store secrets in this file or anywhere else in the repo. This includes sudo passwords, API keys, tokens, private SSH keys, and credential material. Enter sensitive credentials interactively or keep them in a dedicated secret manager outside the project tree.
 
 ## Project Summary
@@ -157,3 +158,18 @@ The current working assumption is:
   - created merge commit `9ef072b` (`Merge origin/main into project history`)
   - pushed the reconciled history to `origin/main`
   - preserved the earlier backup at `origin/codex-checkpoint-2026-06-06`
+- Added an explicit workflow instruction to keep Git updated with commits/pushes when a meaningful checkpoint or risky transition justifies it.
+- Added a host API runtime-controller injection seam:
+  - `apps/host-api/src/runtime-controller-factory.ts` now exports `RuntimeControllerFactory`
+  - `apps/host-api/src/state.ts` accepts an injected runtime-controller factory for tests and future alternate boot paths
+- Extended `apps/host-api/src/create-app.test.ts` with managed-VM app-layer coverage:
+  - mocks guest `GET /health`
+  - mocks guest `GET /events` SSE stream
+  - exercises host `POST /api/runtime/start`
+  - exercises host `POST /api/catalog/scan`
+  - exercises host `POST /api/sessions`
+  - exercises host `POST /api/sessions/:id/terminate`
+  - verifies the host app drives the expected guest-agent HTTP contract
+- Verified after the host API managed-VM test addition:
+  - `npm test` passed
+  - `npm run build` passed

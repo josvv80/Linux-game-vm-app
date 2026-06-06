@@ -153,3 +153,7 @@ The current working assumption is:
   - fetched the unrelated remote root commit
   - merged with `--allow-unrelated-histories`
   - resolved the `README.md` add/add conflict in favor of the current project README
+- Completed GitHub branch reconciliation:
+  - created merge commit `9ef072b` (`Merge origin/main into project history`)
+  - pushed the reconciled history to `origin/main`
+  - preserved the earlier backup at `origin/codex-checkpoint-2026-06-06`

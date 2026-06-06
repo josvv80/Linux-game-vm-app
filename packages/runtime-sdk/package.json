@@ -1,0 +1,23 @@
+{
+  "name": "@game-vm-hub/runtime-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@game-vm-hub/catalog-core": "0.1.0",
+    "@game-vm-hub/shared-types": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "vitest": "^2.1.4"
+  }
+}

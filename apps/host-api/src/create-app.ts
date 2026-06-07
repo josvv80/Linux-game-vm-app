@@ -20,6 +20,15 @@ interface UpdateConfigBody {
   };
 }
 
+interface UpdateSimulationBody {
+  gameId: string;
+  outcome?: "success" | "fail-before-stream-ready";
+  failureMessage?: string;
+  launchAcceptedDelayMs?: number;
+  gameDetectedDelayMs?: number;
+  streamReadyDelayMs?: number;
+}
+
 export function buildApp(state: AppState = createAppState()) {
   const app = Fastify({
     logger: false,
@@ -49,6 +58,7 @@ export function buildApp(state: AppState = createAppState()) {
   });
   app.get("/api/sessions", async () => state.snapshot().sessions);
   app.get("/api/diagnostics", async () => state.diagnostics());
+  app.get("/api/simulation", async () => state.getSimulationCatalog());
 
   app.post("/api/runtime/start", async () => state.startRuntime());
   app.post("/api/runtime/recover", async () => state.prepareRuntime());
@@ -57,6 +67,9 @@ export function buildApp(state: AppState = createAppState()) {
   );
   app.put("/api/config", async (request) =>
     state.updateConfig(request.body as UpdateConfigBody),
+  );
+  app.put("/api/simulation", async (request) =>
+    state.updateSimulation(request.body as UpdateSimulationBody),
   );
   app.post("/api/catalog/scan", async () => state.scanCatalog());
   app.post("/api/runtime/attach-display", async () => state.attachDisplay());

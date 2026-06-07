@@ -286,3 +286,24 @@ The current working assumption is:
 - Updated `guest/windows-agent/CONTRACT.md` and `guest/windows-agent/README.md` to document the new simulation endpoints and usage.
 - Verified after the guest simulation-controls update:
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed
+- Exposed guest simulation controls through the shared host contract:
+  - `packages/shared-types/src/index.ts` now defines simulation outcome, catalog, profile, and update-request types
+  - `GuestConnection` now supports simulation catalog reads and updates
+- Extended both runtime providers with simulation-catalog support:
+  - `packages/runtime-sdk/src/managed-vm-controller.ts` now proxies guest `GET /simulation` and `PUT /simulation`
+  - `packages/runtime-sdk/src/fake-environment.ts` now keeps in-memory simulation profiles so the host API contract stays consistent across providers
+- Extended the host API with simulation routes:
+  - `apps/host-api/src/state.ts` now exposes simulation catalog read/update methods
+  - `apps/host-api/src/create-app.ts` now serves `GET /api/simulation` and `PUT /api/simulation`
+- Extended coverage for the simulation-control path:
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now verifies managed-VM simulation reads and writes
+  - `apps/host-api/src/create-app.test.ts` now verifies `GET /api/simulation` and `PUT /api/simulation` through the host API
+- Updated the web dashboard to drive guest simulation scenarios directly:
+  - `apps/host-web/src/App.tsx` now loads managed-VM simulation profiles only when the guest is reachable
+  - the UI now exposes per-game outcome and delay controls plus guest-side failure-message editing
+  - `apps/host-web/src/styles.css` now includes layout/styling for the simulation panel
+- Verified after the host-side simulation-control update:
+  - `npm run test --workspace @game-vm-hub/host-api` passed
+  - `npm test` passed
+  - `npm run build` passed
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed

@@ -12,6 +12,7 @@ import type {
   GuestAgentGameListResponse,
   GuestAgentHealthResponse,
   GuestAgentLaunchResponse,
+  GuestAgentSimulationCatalogResponse,
   GuestStatusSnapshot,
   HostConfig,
   SessionEvent,
@@ -210,6 +211,19 @@ describe("host API", () => {
       streamState: "unavailable",
     };
 
+    const simulationCatalog: GuestAgentSimulationCatalogResponse = {
+      games: [
+        {
+          gameId: "steam:app-400",
+          outcome: "success",
+          failureMessage: "Simulated launch failure for Portal.",
+          launchAcceptedDelayMs: 250,
+          gameDetectedDelayMs: 350,
+          streamReadyDelayMs: 500,
+        },
+      ],
+    };
+
     const runtimeFactory = (config: HostConfig) =>
       new ManagedVmController(config, {
         fetchImpl: async (input, init) => {
@@ -269,6 +283,18 @@ describe("host API", () => {
               scannedAt: "2026-06-06T10:00:30.000Z",
             };
             return jsonResponse(response);
+          }
+
+          if (url.pathname === "/simulation" && method === "GET") {
+            return jsonResponse(simulationCatalog);
+          }
+
+          if (url.pathname === "/simulation" && method === "PUT") {
+            simulationCatalog.games[0] = {
+              ...simulationCatalog.games[0],
+              ...(body ? JSON.parse(body) : {}),
+            };
+            return jsonResponse(simulationCatalog);
           }
 
           if (url.pathname === "/launch") {
@@ -391,12 +417,59 @@ describe("host API", () => {
       sessionCount: 1,
     });
 
+    const simulationResponse = await app.inject({
+      method: "GET",
+      url: "/api/simulation",
+    });
+    expect(simulationResponse.statusCode).toBe(200);
+    expect(simulationResponse.json()).toMatchObject({
+      games: [
+        {
+          gameId: "steam:app-400",
+          outcome: "success",
+        },
+      ],
+    });
+
+    const simulationUpdateResponse = await app.inject({
+      method: "PUT",
+      url: "/api/simulation",
+      payload: {
+        gameId: "steam:app-400",
+        outcome: "fail-before-stream-ready",
+        failureMessage: "Portal failed before remote play became ready.",
+        streamReadyDelayMs: 900,
+      },
+    });
+    expect(simulationUpdateResponse.statusCode).toBe(200);
+    expect(simulationUpdateResponse.json()).toMatchObject({
+      games: [
+        {
+          gameId: "steam:app-400",
+          outcome: "fail-before-stream-ready",
+          failureMessage: "Portal failed before remote play became ready.",
+          streamReadyDelayMs: 900,
+        },
+      ],
+    });
+
     expect(calls).toEqual([
       { path: "/health", method: "GET", body: null },
       { path: "/events", method: "GET", body: null },
       { path: "/scan", method: "POST", body: null },
       { path: "/launch", method: "POST", body: JSON.stringify({ gameId: "steam:app-400" }) },
       { path: "/terminate", method: "POST", body: JSON.stringify({ sessionId: "session-1" }) },
+      { path: "/simulation", method: "GET", body: null },
+      {
+        path: "/simulation",
+        method: "PUT",
+        body: JSON.stringify({
+          gameId: "steam:app-400",
+          outcome: "fail-before-stream-ready",
+          failureMessage: "Portal failed before remote play became ready.",
+          streamReadyDelayMs: 900,
+        }),
+      },
     ]);
 
     stream.close();

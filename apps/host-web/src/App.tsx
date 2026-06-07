@@ -10,6 +10,9 @@ import type {
   RuntimeDiagnostics,
   SessionEvent,
   RuntimeProviderId,
+  SimulationCatalog,
+  SimulationGameProfile,
+  SimulationOutcome,
 } from "@game-vm-hub/shared-types";
 
 type RuntimeAction = "start" | "stop" | "scan" | "recover";
@@ -25,6 +28,10 @@ const emptySnapshot: DashboardSnapshot = {
   games: [],
   sessions: [],
   events: [],
+};
+
+const emptySimulationCatalog: SimulationCatalog = {
+  games: [],
 };
 
 function formatTime(value?: string) {
@@ -169,6 +176,9 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics>(defaultDiagnostics);
+  const [simulationCatalog, setSimulationCatalog] =
+    useState<SimulationCatalog>(emptySimulationCatalog);
+  const [savingSimulationGameId, setSavingSimulationGameId] = useState<string | null>(null);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -186,6 +196,33 @@ export function App() {
 
       startTransition(() => {
         setDiagnostics(nextDiagnostics);
+      });
+    } catch (error) {
+      if (reportErrors) {
+        setErrorMessage((error as Error).message);
+      }
+    }
+  });
+
+  const refreshSimulation = useEffectEvent(async (reportErrors = false) => {
+    if (config.runtimeProvider !== "managed-vm" || !diagnostics.guestAgentReachable) {
+      startTransition(() => {
+        setSimulationCatalog(emptySimulationCatalog);
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/simulation");
+
+      if (!response.ok) {
+        throw new Error(`Simulation request failed: ${response.status}`);
+      }
+
+      const nextCatalog = (await response.json()) as SimulationCatalog;
+
+      startTransition(() => {
+        setSimulationCatalog(nextCatalog);
       });
     } catch (error) {
       if (reportErrors) {
@@ -259,6 +296,15 @@ export function App() {
     };
   }, [refreshDiagnostics]);
 
+  useEffect(() => {
+    if (config.runtimeProvider !== "managed-vm" || !diagnostics.guestAgentReachable) {
+      setSimulationCatalog(emptySimulationCatalog);
+      return;
+    }
+
+    void refreshSimulation(false);
+  }, [config.runtimeProvider, diagnostics.guestAgentReachable, refreshSimulation]);
+
   const filteredGames = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase();
 
@@ -276,6 +322,10 @@ export function App() {
   );
   const latestSession = snapshot.sessions[0];
   const recoveryState = deriveRecoveryState(config, diagnostics, snapshot.status, latestSession);
+  const gameTitlesById = useMemo(
+    () => new Map(snapshot.games.map((game) => [game.id, game.title])),
+    [snapshot.games],
+  );
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -351,6 +401,42 @@ export function App() {
       setErrorMessage((error as Error).message);
     } finally {
       setSavingConfig(false);
+    }
+  }
+
+  function updateSimulationProfile(
+    gameId: string,
+    update: (profile: SimulationGameProfile) => SimulationGameProfile,
+  ) {
+    setSimulationCatalog((current) => ({
+      games: current.games.map((profile) =>
+        profile.gameId === gameId ? update(profile) : profile,
+      ),
+    }));
+  }
+
+  async function saveSimulationProfile(profile: SimulationGameProfile) {
+    setSavingSimulationGameId(profile.gameId);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/simulation", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(profile),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Simulation update failed: ${response.status}`);
+      }
+
+      setSimulationCatalog((await response.json()) as SimulationCatalog);
+    } catch (error) {
+      setErrorMessage((error as Error).message);
+    } finally {
+      setSavingSimulationGameId(null);
     }
   }
 
@@ -619,6 +705,134 @@ export function App() {
           </div>
         </article>
       </section>
+
+      {config.runtimeProvider === "managed-vm" ? (
+        <section className="simulation-section">
+          <article className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="panel-kicker">Guest Simulation</p>
+                <h2>Launch Scenario Controls</h2>
+              </div>
+              <span className="badge">
+                {diagnostics.guestAgentReachable ? "Guest reachable" : "Guest offline"}
+              </span>
+            </div>
+            <p className="simulation-intro">
+              Drive healthy, failed, and slow-stream managed-VM launch paths from the host UI
+              without editing the guest scaffold directly.
+            </p>
+            {!diagnostics.guestAgentReachable ? (
+              <p className="empty-state">
+                Start the managed guest before editing guest-side simulation profiles.
+              </p>
+            ) : (
+              <div className="simulation-list">
+                {simulationCatalog.games.map((profile) => (
+                  <div key={profile.gameId} className="simulation-card">
+                    <div className="simulation-card-header">
+                      <div>
+                        <p className="game-title">
+                          {gameTitlesById.get(profile.gameId) ?? profile.gameId}
+                        </p>
+                        <p className="game-subtitle">{profile.gameId}</p>
+                      </div>
+                      <span className="chip">{profile.outcome}</span>
+                    </div>
+                    <div className="simulation-grid">
+                      <label>
+                        Outcome
+                        <select
+                          value={profile.outcome}
+                          onChange={(event) =>
+                            updateSimulationProfile(profile.gameId, (current) => ({
+                              ...current,
+                              outcome: event.target.value as SimulationOutcome,
+                            }))
+                          }
+                        >
+                          <option value="success">success</option>
+                          <option value="fail-before-stream-ready">
+                            fail-before-stream-ready
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        Launch accept delay
+                        <input
+                          min={0}
+                          type="number"
+                          value={profile.launchAcceptedDelayMs}
+                          onChange={(event) =>
+                            updateSimulationProfile(profile.gameId, (current) => ({
+                              ...current,
+                              launchAcceptedDelayMs: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Game detect delay
+                        <input
+                          min={0}
+                          type="number"
+                          value={profile.gameDetectedDelayMs}
+                          onChange={(event) =>
+                            updateSimulationProfile(profile.gameId, (current) => ({
+                              ...current,
+                              gameDetectedDelayMs: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Stream ready delay
+                        <input
+                          min={0}
+                          type="number"
+                          value={profile.streamReadyDelayMs}
+                          onChange={(event) =>
+                            updateSimulationProfile(profile.gameId, (current) => ({
+                              ...current,
+                              streamReadyDelayMs: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <label className="simulation-message">
+                      Failure message
+                      <input
+                        value={profile.failureMessage}
+                        onChange={(event) =>
+                          updateSimulationProfile(profile.gameId, (current) => ({
+                            ...current,
+                            failureMessage: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <div className="simulation-actions">
+                      <button
+                        disabled={busyAction !== null || savingSimulationGameId === profile.gameId}
+                        onClick={() => void saveSimulationProfile(profile)}
+                      >
+                        {savingSimulationGameId === profile.gameId ? "Saving..." : "Save scenario"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {simulationCatalog.games.length === 0 ? (
+                  <p className="empty-state">
+                    No guest simulation profiles are available yet. Verify the guest scaffold is
+                    reachable.
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </article>
+        </section>
+      ) : null}
     </main>
   );
 }

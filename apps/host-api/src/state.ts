@@ -4,6 +4,7 @@ import type {
   HostConfigPatch,
   GuestStatusSnapshot,
   SessionEvent,
+  SimulationUpdateRequest,
 } from "@game-vm-hub/shared-types";
 import { ConfigStore, defaultHostConfig } from "./config-store.js";
 import {
@@ -95,6 +96,16 @@ export class AppState {
   async createSession(gameId: string) {
     await this.ensureReady();
     return this.controller.guestConnection.launchGame(gameId);
+  }
+
+  async getSimulationCatalog() {
+    await this.ensureReady();
+    return this.controller.guestConnection.getSimulationCatalog();
+  }
+
+  async updateSimulation(request: SimulationUpdateRequest) {
+    await this.ensureReady();
+    return this.controller.guestConnection.updateSimulation(request);
   }
 
   async terminateSession(sessionId: string) {

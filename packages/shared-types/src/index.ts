@@ -1,5 +1,6 @@
 export type LauncherId = "steam" | "ubisoft-connect" | "manual";
 export type RuntimeProviderId = "fake" | "managed-vm";
+export type SimulationOutcome = "success" | "fail-before-stream-ready";
 
 export type InstallState = "installed" | "not-installed" | "launcher-missing";
 
@@ -104,6 +105,28 @@ export interface RuntimeDiagnostics {
   lastSessionError?: string;
 }
 
+export interface SimulationGameProfile {
+  gameId: string;
+  outcome: SimulationOutcome;
+  failureMessage: string;
+  launchAcceptedDelayMs: number;
+  gameDetectedDelayMs: number;
+  streamReadyDelayMs: number;
+}
+
+export interface SimulationCatalog {
+  games: SimulationGameProfile[];
+}
+
+export interface SimulationUpdateRequest {
+  gameId: string;
+  outcome?: SimulationOutcome;
+  failureMessage?: string;
+  launchAcceptedDelayMs?: number;
+  gameDetectedDelayMs?: number;
+  streamReadyDelayMs?: number;
+}
+
 export interface RuntimeProvider {
   getStatus(): Promise<GuestStatusSnapshot>;
   prepare(): Promise<GuestStatusSnapshot>;
@@ -117,6 +140,8 @@ export interface GuestConnection {
   getHealth(): Promise<GuestStatusSnapshot>;
   scanGames(): Promise<GameRecord[]>;
   listGames(): Promise<GameRecord[]>;
+  getSimulationCatalog(): Promise<SimulationCatalog>;
+  updateSimulation(request: SimulationUpdateRequest): Promise<SimulationCatalog>;
   launchGame(gameId: string): Promise<LaunchResult>;
   terminateSession(sessionId: string): Promise<GameSession | null>;
 }
@@ -182,6 +207,12 @@ export interface GuestAgentEventEnvelope {
   event: SessionEvent;
   status: GuestStatusSnapshot;
 }
+
+export interface GuestAgentSimulationCatalogResponse {
+  games: SimulationGameProfile[];
+}
+
+export interface GuestAgentSimulationUpdateRequest extends SimulationUpdateRequest {}
 
 export interface DashboardEventMessage {
   type: "event";

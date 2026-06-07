@@ -12,6 +12,9 @@ import type {
   RuntimeDiagnostics,
   RuntimeProvider,
   SessionEvent,
+  SimulationCatalog,
+  SimulationGameProfile,
+  SimulationUpdateRequest,
 } from "@game-vm-hub/shared-types";
 
 export interface FakeEnvironmentOptions {
@@ -60,6 +63,7 @@ type EventListener = (event: SessionEvent, snapshot: DashboardSnapshot) => void;
 export class FakeEnvironment {
   private readonly emitter = new EventEmitter();
   private readonly stepDelayMs: number;
+  private readonly simulationProfiles = new Map<string, SimulationGameProfile>();
   private games: GameRecord[] = [];
   private sessions: GameSession[] = [];
   private events: SessionEvent[] = [];
@@ -79,6 +83,7 @@ export class FakeEnvironment {
 
   constructor(options: FakeEnvironmentOptions = {}) {
     this.stepDelayMs = options.stepDelayMs ?? 200;
+    this.seedSimulationProfiles();
 
     this.runtimeProvider = {
       getStatus: async () => this.getStatus(),
@@ -93,6 +98,8 @@ export class FakeEnvironment {
       getHealth: async () => this.getStatus(),
       scanGames: async () => this.scanGames(),
       listGames: async () => this.listGames(),
+      getSimulationCatalog: async () => this.getSimulationCatalog(),
+      updateSimulation: async (request) => this.updateSimulation(request),
       launchGame: async (gameId) => this.launchGame(gameId),
       terminateSession: async (sessionId) => this.terminateSession(sessionId),
     };
@@ -254,6 +261,7 @@ export class FakeEnvironment {
       compatibilityFlags: [...game.compatibilityFlags],
       guestMetadata: { ...game.guestMetadata },
     }));
+    this.applySimulationProfiles(this.games);
 
     this.status.scanState = "complete";
     this.status.agentState = "ready";
@@ -268,6 +276,42 @@ export class FakeEnvironment {
 
   async listGames(): Promise<GameRecord[]> {
     return clone(this.games);
+  }
+
+  async getSimulationCatalog(): Promise<SimulationCatalog> {
+    return {
+      games: this.listSimulationProfiles(),
+    };
+  }
+
+  async updateSimulation(request: SimulationUpdateRequest): Promise<SimulationCatalog> {
+    const profile = this.simulationProfiles.get(request.gameId);
+
+    if (!profile) {
+      throw new Error(`Unknown simulation profile: ${request.gameId}`);
+    }
+
+    if (request.outcome) {
+      profile.outcome = request.outcome;
+    }
+    if (request.failureMessage !== undefined) {
+      profile.failureMessage = request.failureMessage;
+    }
+    if (request.launchAcceptedDelayMs !== undefined) {
+      profile.launchAcceptedDelayMs = request.launchAcceptedDelayMs;
+    }
+    if (request.gameDetectedDelayMs !== undefined) {
+      profile.gameDetectedDelayMs = request.gameDetectedDelayMs;
+    }
+    if (request.streamReadyDelayMs !== undefined) {
+      profile.streamReadyDelayMs = request.streamReadyDelayMs;
+    }
+
+    this.applySimulationProfiles(this.games);
+
+    return {
+      games: this.listSimulationProfiles(),
+    };
   }
 
   async launchGame(gameId: string): Promise<LaunchResult> {
@@ -376,6 +420,44 @@ export class FakeEnvironment {
     this.status.lastEventAt = event.createdAt;
     this.emitter.emit("event", clone(event), this.snapshot());
     return event;
+  }
+
+  private seedSimulationProfiles() {
+    for (const game of defaultGames) {
+      this.simulationProfiles.set(game.id, {
+        gameId: game.id,
+        outcome: game.id === "ubisoft-connect:anno-1800" ? "fail-before-stream-ready" : "success",
+        failureMessage:
+          game.id === "ubisoft-connect:anno-1800"
+            ? "Sunshine stream handshake timed out before the game session became remotely playable."
+            : `Simulated launch failure for ${game.title}.`,
+        launchAcceptedDelayMs: 250,
+        gameDetectedDelayMs: 350,
+        streamReadyDelayMs: 500,
+      });
+    }
+  }
+
+  private listSimulationProfiles(): SimulationGameProfile[] {
+    return [...this.simulationProfiles.values()]
+      .sort((left, right) => left.gameId.localeCompare(right.gameId))
+      .map((profile) => clone(profile));
+  }
+
+  private applySimulationProfiles(games: GameRecord[]) {
+    for (const game of games) {
+      const profile = this.simulationProfiles.get(game.id);
+
+      if (!profile) {
+        continue;
+      }
+
+      game.guestMetadata.simulatedOutcome = profile.outcome;
+      game.guestMetadata.simulatedFailure = profile.failureMessage;
+      game.guestMetadata.launchAcceptedDelayMs = String(profile.launchAcceptedDelayMs);
+      game.guestMetadata.gameDetectedDelayMs = String(profile.gameDetectedDelayMs);
+      game.guestMetadata.streamReadyDelayMs = String(profile.streamReadyDelayMs);
+    }
   }
 }
 

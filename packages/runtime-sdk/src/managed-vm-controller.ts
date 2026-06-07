@@ -9,6 +9,8 @@ import type {
   GuestAgentHealthResponse,
   GuestAgentLaunchRequest,
   GuestAgentLaunchResponse,
+  GuestAgentSimulationCatalogResponse,
+  GuestAgentSimulationUpdateRequest,
   GuestAgentTerminateRequest,
   GuestConnection,
   GuestStatusSnapshot,
@@ -16,6 +18,7 @@ import type {
   RuntimeDiagnostics,
   RuntimeProvider,
   SessionEvent,
+  SimulationCatalog,
 } from "@game-vm-hub/shared-types";
 
 type EventListener = (event: SessionEvent, snapshot: DashboardSnapshot) => void;
@@ -86,6 +89,8 @@ export class ManagedVmController {
       getHealth: async () => this.refreshHealth(),
       scanGames: async () => this.scanGames(),
       listGames: async () => this.listGames(),
+      getSimulationCatalog: async () => this.getSimulationCatalog(),
+      updateSimulation: async (request) => this.updateSimulation(request),
       launchGame: async (gameId) => this.launchGame(gameId),
       terminateSession: async (sessionId) => this.terminateSession(sessionId),
     };
@@ -269,6 +274,26 @@ export class ManagedVmController {
 
   async listGames(): Promise<GameRecord[]> {
     return clone(this.games);
+  }
+
+  async getSimulationCatalog(): Promise<SimulationCatalog> {
+    await this.ensureConnected();
+    return clone(await this.fetchJson<GuestAgentSimulationCatalogResponse>("/simulation"));
+  }
+
+  async updateSimulation(
+    request: GuestAgentSimulationUpdateRequest,
+  ): Promise<SimulationCatalog> {
+    await this.ensureConnected();
+    return clone(
+      await this.fetchJson<GuestAgentSimulationCatalogResponse>("/simulation", {
+        method: "PUT",
+        body: JSON.stringify(request),
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
   }
 
   async launchGame(gameId: string): Promise<GuestAgentLaunchResponse> {

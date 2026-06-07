@@ -12,6 +12,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
 - `POST /scan`
   - triggers launcher scanning in the guest
   - returns `GuestAgentGameListResponse`
+  - current scaffold attempts real Steam `appmanifest_*.acf` discovery first and falls back to sample Steam data if no Windows Steam library is found
 - `GET /games`
   - returns `GuestAgentGameListResponse`
 - `GET /simulation`

@@ -79,12 +79,7 @@ internal sealed class GuestAgentState
         StreamHostState = "unavailable",
         ScanState = "idle",
         ConnectedGuestName = "Windows Gaming VM",
-        Warnings =
-        [
-            "Windows guest agent scaffold is using sample launcher data.",
-            "Real Steam and Ubisoft Connect scanners are not implemented yet.",
-            "Sunshine readiness is simulated through delayed launch lifecycle events."
-        ]
+        Warnings = BuildWarnings(steamDiscoveryCount: 0, usedSteamSampleFallback: true)
     };
 
     public GuestAgentState()
@@ -140,12 +135,18 @@ internal sealed class GuestAgentState
 
         await Task.Delay(TimeSpan.FromMilliseconds(150), cancellationToken);
 
+        var steamScan = SteamLibraryScanner.Scan();
+        var nextCatalog = CreateScanCatalog(steamScan);
+
         games.Clear();
-        games.AddRange(CreateSampleGames());
+        games.AddRange(nextCatalog);
         ApplySimulationProfiles(games);
 
         status.AgentState = "ready";
         status.ScanState = "complete";
+        status.Warnings = BuildWarnings(
+            steamDiscoveryCount: steamScan.Games.Count,
+            usedSteamSampleFallback: steamScan.Games.Count == 0);
 
         Publish(new SessionEvent
         {
@@ -153,7 +154,9 @@ internal sealed class GuestAgentState
             Type = "guest.scan.completed",
             Level = "info",
             CreatedAt = UtcNow(),
-            Message = $"Guest launcher scan completed with {games.Count} games."
+            Message = steamScan.Games.Count > 0
+                ? $"Guest launcher scan completed with {games.Count} games, including {steamScan.Games.Count} real Steam discoveries."
+                : $"Guest launcher scan completed with {games.Count} sample games."
         });
 
         return ListGames();
@@ -269,7 +272,7 @@ internal sealed class GuestAgentState
         _ = RunLaunchLifecycleAsync(
             CloneGame(game),
             session.Id,
-            CloneSimulationSettings(ResolveSimulationSettings(game.Id)),
+            CloneSimulationSettings(GetOrCreateSimulationSettings(game.Id, game.Title)),
             cancellationTokenSource.Token);
 
         return new GuestAgentLaunchResponse
@@ -591,7 +594,15 @@ internal sealed class GuestAgentState
         ];
     }
 
-    private GuestAgentSimulationSettings ResolveSimulationSettings(string gameId)
+    private void ApplySimulationProfiles(List<GameRecord> catalog)
+    {
+        foreach (var game in catalog)
+        {
+            ApplySimulationProfile(game, GetOrCreateSimulationSettings(game.Id, game.Title));
+        }
+    }
+
+    private GuestAgentSimulationSettings GetOrCreateSimulationSettings(string gameId, string gameTitle)
     {
         lock (sync)
         {
@@ -599,24 +610,10 @@ internal sealed class GuestAgentState
             {
                 return CloneSimulationSettings(profile);
             }
-        }
 
-        return new GuestAgentSimulationSettings
-        {
-            GameId = gameId,
-            Outcome = "success",
-            FailureMessage = $"Simulated launch failure for {gameId}.",
-            LaunchAcceptedDelayMs = 250,
-            GameDetectedDelayMs = 350,
-            StreamReadyDelayMs = 500
-        };
-    }
-
-    private void ApplySimulationProfiles(List<GameRecord> catalog)
-    {
-        foreach (var game in catalog)
-        {
-            ApplySimulationProfile(game, ResolveSimulationSettings(game.Id));
+            var created = CreateDefaultSimulationSettings(gameId, gameTitle);
+            simulationProfiles[gameId] = created;
+            return CloneSimulationSettings(created);
         }
     }
 
@@ -714,7 +711,46 @@ internal sealed class GuestAgentState
         await response.Body.FlushAsync(cancellationToken);
     }
 
-    private static List<GameRecord> CreateSampleGames()
+    private static List<GameRecord> CreateScanCatalog(SteamScanCatalog steamScan)
+    {
+        var catalog = new List<GameRecord>();
+
+        if (steamScan.Games.Count > 0)
+        {
+            catalog.AddRange(steamScan.Games.Select(CloneGame));
+        }
+        else
+        {
+            catalog.AddRange(CreateSampleSteamGames());
+        }
+
+        catalog.AddRange(CreateSampleUbisoftGames());
+
+        return catalog
+            .OrderBy(game => game.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> BuildWarnings(int steamDiscoveryCount, bool usedSteamSampleFallback)
+    {
+        var warnings = new List<string>();
+
+        if (usedSteamSampleFallback)
+        {
+            warnings.Add("Steam discovery found no Windows Steam libraries; sample Steam data is being used.");
+        }
+        else
+        {
+            warnings.Add($"Steam discovery is active and found {steamDiscoveryCount} installed Steam title(s).");
+        }
+
+        warnings.Add("Ubisoft Connect discovery is not implemented yet; sample Ubisoft data remains in the scaffold.");
+        warnings.Add("Sunshine readiness is simulated through delayed launch lifecycle events.");
+
+        return warnings;
+    }
+
+    private static List<GameRecord> CreateSampleSteamGames()
     {
         return
         [
@@ -730,9 +766,17 @@ internal sealed class GuestAgentState
                 GuestMetadata = new Dictionary<string, string>
                 {
                     ["installRoot"] = @"C:\Program Files (x86)\Steam",
-                    ["launcherAppId"] = "578080"
+                    ["launcherAppId"] = "578080",
+                    ["discoverySource"] = "sample-steam"
                 }
-            },
+            }
+        ];
+    }
+
+    private static List<GameRecord> CreateSampleUbisoftGames()
+    {
+        return
+        [
             new GameRecord
             {
                 Id = "ubisoft-connect:anno-1800",
@@ -746,11 +790,38 @@ internal sealed class GuestAgentState
                 {
                     ["installRoot"] = @"D:\Games\Ubisoft",
                     ["launcherAppId"] = "12345",
+                    ["discoverySource"] = "sample-ubisoft",
                     ["simulatedOutcome"] = "fail-before-stream-ready",
                     ["simulatedFailure"] = "Sunshine stream handshake timed out before the game session became remotely playable."
                 }
             }
         ];
+    }
+
+    private static GuestAgentSimulationSettings CreateDefaultSimulationSettings(string gameId, string gameTitle)
+    {
+        if (gameId == "ubisoft-connect:anno-1800")
+        {
+            return new GuestAgentSimulationSettings
+            {
+                GameId = gameId,
+                Outcome = "fail-before-stream-ready",
+                FailureMessage = "Sunshine stream handshake timed out before the game session became remotely playable.",
+                LaunchAcceptedDelayMs = 250,
+                GameDetectedDelayMs = 350,
+                StreamReadyDelayMs = 500
+            };
+        }
+
+        return new GuestAgentSimulationSettings
+        {
+            GameId = gameId,
+            Outcome = "success",
+            FailureMessage = $"Simulated launch failure for {gameTitle}.",
+            LaunchAcceptedDelayMs = 250,
+            GameDetectedDelayMs = 350,
+            StreamReadyDelayMs = 500
+        };
     }
 
     private static string UtcNow() => DateTimeOffset.UtcNow.ToString("O");

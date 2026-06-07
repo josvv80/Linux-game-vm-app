@@ -307,3 +307,13 @@ The current working assumption is:
   - `npm test` passed
   - `npm run build` passed
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed
+- Replaced the guest agent's Steam-only sample scan path with a first real discovery pass:
+  - added `guest/windows-agent/SteamLibraryScanner.cs`
+  - `POST /scan` now attempts to discover installed Steam titles from Windows `libraryfolders.vdf` and `appmanifest_*.acf`
+  - discovered Steam titles are normalized to stable `steam:app-<appid>` ids with real install-root and manifest metadata
+  - if no Windows Steam library is found, the guest falls back to sample Steam data instead of returning an empty catalog
+  - sample Ubisoft data remains in the catalog because Ubisoft Connect discovery is still not implemented
+- Extended guest simulation-profile behavior so newly discovered Steam titles also get editable simulation profiles instead of only the hard-coded sample entries.
+- Updated `guest/windows-agent/README.md` and `guest/windows-agent/CONTRACT.md` to document the new mixed real-scan plus sample-fallback behavior.
+- Verified after the guest Steam discovery update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed

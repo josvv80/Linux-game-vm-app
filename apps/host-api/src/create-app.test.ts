@@ -401,4 +401,98 @@ describe("host API", () => {
 
     stream.close();
   });
+
+  it("recovers the managed-vm event stream through the host API", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+
+    const managedConfig: HostConfig = {
+      runtimeProvider: "managed-vm",
+      managedVm: {
+        vmName: "windows-vfio",
+        guestAgentBaseUrl: "http://127.0.0.1:8765",
+        streamMode: "sunshine-moonlight",
+      },
+    };
+
+    let streamAvailable = false;
+    const stream = createEventStream();
+    const runtimeFactory = (config: HostConfig) =>
+      new ManagedVmController(config, {
+        fetchImpl: async (input) => {
+          const url =
+            typeof input === "string"
+              ? new URL(input)
+              : input instanceof URL
+                ? input
+                : new URL(input.url);
+
+          if (url.pathname === "/health") {
+            return jsonResponse({
+              guestName: "Windows Gaming VM",
+              agentVersion: "0.1.0",
+              status: {
+                guestPowerState: "running",
+                agentState: "ready",
+                streamHostState: "preparing",
+                scanState: "idle",
+                warnings: [],
+                connectedGuestName: "Windows Gaming VM",
+              },
+            } satisfies GuestAgentHealthResponse);
+          }
+
+          if (url.pathname === "/events") {
+            if (streamAvailable) {
+              return stream.response;
+            }
+
+            return jsonResponse({ message: "stream not available" }, 503);
+          }
+
+          return jsonResponse({ message: "Not found" }, 404);
+        },
+      });
+
+    await writeFile(configPath, `${JSON.stringify(managedConfig, null, 2)}\n`, "utf8");
+
+    const app = buildApp(
+      new AppState(new ConfigStore(configPath), defaultHostConfig, runtimeFactory),
+    );
+    apps.push(app);
+
+    const startResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/start",
+    });
+    expect(startResponse.statusCode).toBe(200);
+
+    const diagnosticsBefore = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics",
+    });
+    expect(diagnosticsBefore.json()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: false,
+    });
+
+    streamAvailable = true;
+    const recoverResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/recover",
+    });
+    expect(recoverResponse.statusCode).toBe(200);
+
+    const diagnosticsAfter = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics",
+    });
+    expect(diagnosticsAfter.json()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: true,
+      connectedGuestName: "Windows Gaming VM",
+    });
+
+    stream.close();
+  });
 });

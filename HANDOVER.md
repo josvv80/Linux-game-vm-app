@@ -213,3 +213,17 @@ The current working assumption is:
 - Verified after the diagnostics UI and runtime update:
   - `npm test` passed
   - `npm run build` passed
+- Extended `packages/runtime-sdk/src/managed-vm-controller.ts` with an explicit reconnect path:
+  - `prepare()` now refreshes guest health and retries the guest `GET /events` stream
+  - actions that run while the guest is already reachable now also retry the event stream if it is disconnected
+  - an unexpectedly ended event stream is now treated as a recoverable disconnect instead of being silently accepted
+- Added managed-VM recovery coverage:
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now verifies that `prepare()` reconnects the event stream after an initial `GET /events` failure
+  - `apps/host-api/src/create-app.test.ts` now verifies `POST /api/runtime/recover` through the host API
+- Added explicit recovery plumbing in the host app:
+  - `apps/host-api/src/state.ts` now exposes `prepareRuntime()`
+  - `apps/host-api/src/create-app.ts` now exposes `POST /api/runtime/recover`
+  - `apps/host-web/src/App.tsx` now shows a `Recover link` action when the guest is reachable but the event stream is disconnected
+- Verified after the recovery path update:
+  - `npm test` passed
+  - `npm run build` passed

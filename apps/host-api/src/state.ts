@@ -67,6 +67,11 @@ export class AppState {
     return this.controller.runtimeProvider.startGuest();
   }
 
+  async prepareRuntime(): Promise<GuestStatusSnapshot> {
+    await this.ensureReady();
+    return this.controller.runtimeProvider.prepare();
+  }
+
   async stopRuntime(force = false): Promise<GuestStatusSnapshot> {
     await this.ensureReady();
     return this.controller.runtimeProvider.stopGuest(force);

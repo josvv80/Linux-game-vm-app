@@ -51,6 +51,7 @@ export function buildApp(state: AppState = createAppState()) {
   app.get("/api/diagnostics", async () => state.diagnostics());
 
   app.post("/api/runtime/start", async () => state.startRuntime());
+  app.post("/api/runtime/recover", async () => state.prepareRuntime());
   app.post("/api/runtime/stop", async (request) =>
     state.stopRuntime(Boolean((request.body as StopRuntimeBody | undefined)?.force)),
   );

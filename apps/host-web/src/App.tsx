@@ -12,7 +12,7 @@ import type {
   RuntimeProviderId,
 } from "@game-vm-hub/shared-types";
 
-type RuntimeAction = "start" | "stop" | "scan";
+type RuntimeAction = "start" | "stop" | "scan" | "recover";
 
 const emptySnapshot: DashboardSnapshot = {
   status: {
@@ -216,6 +216,8 @@ export function App() {
     try {
       if (action === "start") {
         await postJson("/api/runtime/start");
+      } else if (action === "recover") {
+        await postJson("/api/runtime/recover");
       } else if (action === "stop") {
         await postJson("/api/runtime/stop", { force: true });
       } else {
@@ -315,6 +317,16 @@ export function App() {
           <div className="button-row">
             <button disabled={busyAction !== null} onClick={() => void runAction("start")}>
               Start guest
+            </button>
+            <button
+              disabled={
+                busyAction !== null ||
+                !diagnostics.guestAgentReachable ||
+                Boolean(diagnostics.eventStreamConnected)
+              }
+              onClick={() => void runAction("recover")}
+            >
+              Recover link
             </button>
             <button disabled={busyAction !== null} onClick={() => void runAction("scan")}>
               Scan catalog

@@ -111,7 +111,9 @@ export class ManagedVmController {
   }
 
   async prepare(): Promise<GuestStatusSnapshot> {
-    return this.refreshHealth();
+    await this.refreshHealth();
+    await this.ensureEventStream();
+    return this.getStatus();
   }
 
   async startGuest(): Promise<GuestStatusSnapshot> {
@@ -359,6 +361,9 @@ export class ManagedVmController {
 
   private async ensureConnected() {
     if (this.status.guestPowerState === "running" && this.status.agentState !== "error") {
+      if (!this.remoteEventsEnabled) {
+        await this.ensureEventStream();
+      }
       return;
     }
 
@@ -470,6 +475,10 @@ export class ManagedVmController {
 
       if (dataLines.length > 0) {
         this.handleEventEnvelope(JSON.parse(dataLines.join("\n")) as GuestAgentEventEnvelope);
+      }
+
+      if (!signal.aborted) {
+        throw new Error("Guest event stream ended unexpectedly.");
       }
     } finally {
       reader.releaseLock();

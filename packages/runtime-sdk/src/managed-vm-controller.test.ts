@@ -355,4 +355,63 @@ describe("ManagedVmController", () => {
       "stream not available",
     );
   });
+
+  it("reconnects the guest event stream through prepare when the guest stays reachable", async () => {
+    let streamAvailable = false;
+    const stream = createEventStream();
+    streams.push(stream);
+
+    const controller = new ManagedVmController(config, {
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input)
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+
+        if (url.pathname === "/health") {
+          return jsonResponse({
+            guestName: "Windows Gaming VM",
+            agentVersion: "0.1.0",
+            status: {
+              guestPowerState: "running",
+              agentState: "ready",
+              streamHostState: "preparing",
+              scanState: "idle",
+              warnings: [],
+              connectedGuestName: "Windows Gaming VM",
+            },
+          } satisfies GuestAgentHealthResponse);
+        }
+
+        if (url.pathname === "/events") {
+          if (streamAvailable) {
+            return stream.response;
+          }
+
+          return jsonResponse({ message: "stream not available" }, 503);
+        }
+
+        return jsonResponse({ message: "Not found" }, 404);
+      },
+    });
+
+    await controller.runtimeProvider.startGuest();
+    expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: false,
+    });
+
+    streamAvailable = true;
+    const recoveredStatus = await controller.runtimeProvider.prepare();
+    await flushAsyncWork();
+
+    expect(recoveredStatus.guestPowerState).toBe("running");
+    expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: true,
+      connectedGuestName: "Windows Gaming VM",
+    });
+  });
 });

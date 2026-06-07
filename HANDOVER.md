@@ -227,3 +227,15 @@ The current working assumption is:
 - Verified after the recovery path update:
   - `npm test` passed
   - `npm run build` passed
+- Improved degraded-state operator guidance in the web UI:
+  - `apps/host-web/src/App.tsx` now derives a remote-play recovery state for managed-VM mode
+  - added a top-level recovery banner for:
+    - guest agent offline
+    - control link degraded
+    - remote play not ready
+    - remote play ready
+  - the banner now gives context-specific action guidance instead of relying on raw diagnostics text alone
+- Updated `apps/host-web/src/styles.css` with dedicated styling for the recovery banner and success state messaging.
+- Verified after the degraded-state UI update:
+  - `npm test` passed
+  - `npm run build` passed

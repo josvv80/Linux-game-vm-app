@@ -114,6 +114,35 @@ select {
   gap: 1rem;
 }
 
+.recovery-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1rem;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(17, 20, 26, 0.9);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+.recovery-banner h2,
+.recovery-banner p {
+  margin: 0;
+}
+
+.recovery-banner p:last-child {
+  color: #d7d2ca;
+  margin-top: 0.35rem;
+}
+
+.recovery-ok {
+  color: #9bddaa;
+  font-weight: 700;
+  text-align: right;
+}
+
 .panel {
   padding: 1.2rem;
   min-height: 420px;
@@ -298,6 +327,11 @@ select {
   }
 
   .hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .recovery-banner {
     flex-direction: column;
     align-items: stretch;
   }

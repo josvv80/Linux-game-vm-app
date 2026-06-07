@@ -55,6 +55,58 @@ function statusTone(status: GuestStatusSnapshot) {
   return "neutral";
 }
 
+function deriveRecoveryState(
+  config: HostConfig,
+  diagnostics: RuntimeDiagnostics,
+  status: GuestStatusSnapshot,
+) {
+  if (config.runtimeProvider !== "managed-vm") {
+    return null;
+  }
+
+  if (!diagnostics.guestAgentReachable) {
+    return {
+      tone: "danger" as const,
+      title: "Guest agent offline",
+      detail:
+        "The Linux host cannot reach the Windows guest agent. Start the guest first or verify the guest agent URL before trying to stream.",
+      action: "start" as const,
+      actionLabel: "Start guest",
+    };
+  }
+
+  if (!diagnostics.eventStreamConnected) {
+    return {
+      tone: "warning" as const,
+      title: "Control link degraded",
+      detail:
+        "The guest is reachable, but the host event stream is disconnected. Remote play may still be booting or the guest-side stream link may need recovery.",
+      action: "recover" as const,
+      actionLabel: "Recover link",
+    };
+  }
+
+  if (status.streamHostState !== "ready") {
+    return {
+      tone: "warning" as const,
+      title: "Remote play not ready",
+      detail:
+        "The guest control path is alive, but the stream handoff is not ready yet. Wait for Sunshine readiness or retry recovery if this state stalls.",
+      action: "recover" as const,
+      actionLabel: "Retry stream link",
+    };
+  }
+
+  return {
+    tone: "success" as const,
+    title: "Remote play path ready",
+    detail:
+      "The guest is reachable, the event stream is connected, and the remote-play handoff is ready for Moonlight or another client.",
+    action: null,
+    actionLabel: null,
+  };
+}
+
 const defaultConfig: HostConfig = {
   runtimeProvider: "fake",
   managedVm: {
@@ -208,6 +260,7 @@ export function App() {
       session.id === snapshot.status.activeSessionId &&
       (session.runtimeState === "launching" || session.runtimeState === "running"),
   );
+  const recoveryState = deriveRecoveryState(config, diagnostics, snapshot.status);
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -304,6 +357,30 @@ export function App() {
           <span>Stream {snapshot.status.streamHostState}</span>
         </div>
       </section>
+
+      {recoveryState ? (
+        <section className={`recovery-banner tone-${recoveryState.tone}`}>
+          <div>
+            <p className="panel-kicker">Remote Play State</p>
+            <h2>{recoveryState.title}</h2>
+            <p>{recoveryState.detail}</p>
+          </div>
+          {recoveryState.action ? (
+            <button
+              disabled={
+                busyAction !== null ||
+                (recoveryState.action === "recover" &&
+                  (!diagnostics.guestAgentReachable || Boolean(diagnostics.eventStreamConnected)))
+              }
+              onClick={() => void runAction(recoveryState.action)}
+            >
+              {recoveryState.actionLabel}
+            </button>
+          ) : (
+            <span className="recovery-ok">Moonlight-side launch path is clear.</span>
+          )}
+        </section>
+      ) : null}
 
       <section className="grid">
         <article className="panel">

@@ -342,3 +342,11 @@ The current working assumption is:
 - Updated `guest/windows-agent/README.md` and `guest/windows-agent/CONTRACT.md` to document that Steam handoff is now attempted before the existing staged lifecycle model takes over.
 - Verified after the guest Steam handoff update:
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed
+- Surfaced guest launch-path metadata in the host dashboard:
+  - `apps/host-web/src/App.tsx` now shows per-game launch strategy and last launch detail in the catalog
+  - Steam and simulated launch mode details are now visible directly in game chips and metadata text
+  - the session contract card now shows the active or latest game's launch path and last guest-side handoff detail
+- Updated `apps/host-web/src/styles.css` with styling for the extra launch-metadata lines in the catalog cards.
+- Verified after the launch-path diagnostics UI update:
+  - `npm run build` passed
+  - `npm test` passed

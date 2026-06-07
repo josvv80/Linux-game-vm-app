@@ -362,6 +362,13 @@ select {
   overflow-wrap: anywhere;
 }
 
+.game-meta-line {
+  margin: 0.35rem 0 0;
+  color: #b7bec6;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
 .game-footer {
   justify-content: space-between;
   align-items: center;

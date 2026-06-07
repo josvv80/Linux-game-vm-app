@@ -47,6 +47,17 @@ function discoverySourceLabel(source?: string) {
   }
 }
 
+function launchStrategyLabel(strategy?: string) {
+  switch (strategy) {
+    case "steam-handoff-or-simulated-fallback":
+      return "Steam handoff";
+    case "simulated-only":
+      return "simulated";
+    default:
+      return "unknown launch path";
+  }
+}
+
 function formatTime(value?: string) {
   if (!value) {
     return "n/a";
@@ -339,6 +350,10 @@ export function App() {
     () => new Map(snapshot.games.map((game) => [game.id, game.title])),
     [snapshot.games],
   );
+  const gamesById = useMemo(
+    () => new Map(snapshot.games.map((game) => [game.id, game])),
+    [snapshot.games],
+  );
   const catalogInsights = useMemo(() => {
     const steamLibraryRoots = new Set<string>();
     let realSteamCount = 0;
@@ -378,6 +393,9 @@ export function App() {
       steamLibraryCount: steamLibraryRoots.size,
     };
   }, [snapshot.games]);
+  const activeSessionGame = activeSession ? gamesById.get(activeSession.gameId) : undefined;
+  const latestSessionGame = latestSession ? gamesById.get(latestSession.gameId) : undefined;
+  const launchContextGame = activeSessionGame ?? latestSessionGame;
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -732,6 +750,12 @@ export function App() {
                   {game.guestMetadata.installRoot ? (
                     <p className="game-path">{game.guestMetadata.installRoot}</p>
                   ) : null}
+                  <p className="game-meta-line">
+                    Launch path {launchStrategyLabel(game.guestMetadata.launchStrategy)}
+                  </p>
+                  {game.guestMetadata.lastLaunchDetail ? (
+                    <p className="game-meta-line">{game.guestMetadata.lastLaunchDetail}</p>
+                  ) : null}
                 </div>
                 <div className="game-footer">
                   <div className="chip-row">
@@ -742,6 +766,9 @@ export function App() {
                     ))}
                     {game.guestMetadata.steamLibraryRoot ? (
                       <span className="chip">library {game.guestMetadata.steamLibraryRoot}</span>
+                    ) : null}
+                    {game.guestMetadata.lastLaunchMode ? (
+                      <span className="chip">mode {game.guestMetadata.lastLaunchMode}</span>
                     ) : null}
                   </div>
                   <button
@@ -788,6 +815,15 @@ export function App() {
             <strong>{config.managedVm.guestAgentBaseUrl}</strong>
             <span>Stream mode {config.managedVm.streamMode}</span>
             <span>Diagnostics guest {diagnostics.connectedGuestName ?? "unknown"}</span>
+            <span>
+              Launch path{" "}
+              {launchContextGame
+                ? launchStrategyLabel(launchContextGame.guestMetadata.launchStrategy)
+                : "n/a"}
+            </span>
+            <span>
+              Launch detail {launchContextGame?.guestMetadata.lastLaunchDetail ?? "n/a"}
+            </span>
           </div>
           <div className="event-list">
             {snapshot.events.map((event: SessionEvent) => (

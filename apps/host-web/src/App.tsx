@@ -34,6 +34,19 @@ const emptySimulationCatalog: SimulationCatalog = {
   games: [],
 };
 
+function discoverySourceLabel(source?: string) {
+  switch (source) {
+    case "steam-appmanifest":
+      return "real Steam";
+    case "sample-steam":
+      return "sample Steam";
+    case "sample-ubisoft":
+      return "sample Ubisoft";
+    default:
+      return "unknown source";
+  }
+}
+
 function formatTime(value?: string) {
   if (!value) {
     return "n/a";
@@ -326,6 +339,45 @@ export function App() {
     () => new Map(snapshot.games.map((game) => [game.id, game.title])),
     [snapshot.games],
   );
+  const catalogInsights = useMemo(() => {
+    const steamLibraryRoots = new Set<string>();
+    let realSteamCount = 0;
+    let sampleSteamCount = 0;
+    let sampleUbisoftCount = 0;
+    let unknownCount = 0;
+
+    for (const game of snapshot.games) {
+      const source = game.guestMetadata.discoverySource;
+
+      if (source === "steam-appmanifest") {
+        realSteamCount += 1;
+        if (game.guestMetadata.steamLibraryRoot) {
+          steamLibraryRoots.add(game.guestMetadata.steamLibraryRoot);
+        }
+        continue;
+      }
+
+      if (source === "sample-steam") {
+        sampleSteamCount += 1;
+        continue;
+      }
+
+      if (source === "sample-ubisoft") {
+        sampleUbisoftCount += 1;
+        continue;
+      }
+
+      unknownCount += 1;
+    }
+
+    return {
+      realSteamCount,
+      sampleSteamCount,
+      sampleUbisoftCount,
+      unknownCount,
+      steamLibraryCount: steamLibraryRoots.size,
+    };
+  }, [snapshot.games]);
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -527,6 +579,27 @@ export function App() {
               <dd>{snapshot.games.length}</dd>
             </div>
           </dl>
+          <div className="source-summary">
+            <div className="source-card">
+              <span>Steam discovered</span>
+              <strong>
+                {catalogInsights.realSteamCount > 0
+                  ? `${catalogInsights.realSteamCount} real`
+                  : "no real titles"}
+              </strong>
+              <small>{catalogInsights.steamLibraryCount} library roots</small>
+            </div>
+            <div className="source-card">
+              <span>Steam fallback</span>
+              <strong>{catalogInsights.sampleSteamCount}</strong>
+              <small>sample entries</small>
+            </div>
+            <div className="source-card">
+              <span>Ubisoft fallback</span>
+              <strong>{catalogInsights.sampleUbisoftCount}</strong>
+              <small>sample entries</small>
+            </div>
+          </div>
           <div className="diagnostic-list">
             <div className="diagnostic-item">
               <span>Guest agent</span>
@@ -632,14 +705,33 @@ export function App() {
               <option value="manual">Manual</option>
             </select>
           </div>
+          <div className="catalog-overview">
+            <span className="chip">
+              Real Steam {catalogInsights.realSteamCount}
+            </span>
+            <span className="chip">
+              Sample Steam {catalogInsights.sampleSteamCount}
+            </span>
+            <span className="chip">
+              Sample Ubisoft {catalogInsights.sampleUbisoftCount}
+            </span>
+            {catalogInsights.unknownCount > 0 ? (
+              <span className="chip">
+                Unknown {catalogInsights.unknownCount}
+              </span>
+            ) : null}
+          </div>
           <div className="game-list">
             {filteredGames.map((game) => (
               <div key={game.id} className="game-card">
                 <div>
                   <p className="game-title">{game.title}</p>
                   <p className="game-subtitle">
-                    {game.launcher} · {game.installState}
+                    {game.launcher} · {game.installState} · {discoverySourceLabel(game.guestMetadata.discoverySource)}
                   </p>
+                  {game.guestMetadata.installRoot ? (
+                    <p className="game-path">{game.guestMetadata.installRoot}</p>
+                  ) : null}
                 </div>
                 <div className="game-footer">
                   <div className="chip-row">
@@ -648,6 +740,9 @@ export function App() {
                         {flag}
                       </span>
                     ))}
+                    {game.guestMetadata.steamLibraryRoot ? (
+                      <span className="chip">library {game.guestMetadata.steamLibraryRoot}</span>
+                    ) : null}
                   </div>
                   <button
                     disabled={busyAction !== null}

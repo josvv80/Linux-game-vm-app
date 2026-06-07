@@ -317,3 +317,15 @@ The current working assumption is:
 - Updated `guest/windows-agent/README.md` and `guest/windows-agent/CONTRACT.md` to document the new mixed real-scan plus sample-fallback behavior.
 - Verified after the guest Steam discovery update:
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed
+- Updated the host dashboard to expose guest catalog provenance instead of treating scan results as opaque:
+  - `apps/host-web/src/App.tsx` now derives catalog-source insights from guest metadata
+  - the system panel now shows counts for:
+    - real Steam discoveries
+    - sample Steam fallback entries
+    - sample Ubisoft fallback entries
+  - the library view now shows per-game discovery provenance and install-root metadata when available
+  - real Steam discoveries now expose their library-root provenance directly in the catalog chips
+- Updated `apps/host-web/src/styles.css` with layout and responsive styling for the new catalog-source summary cards and provenance text.
+- Verified after the catalog-provenance UI update:
+  - `npm run build` passed
+  - `npm test` passed

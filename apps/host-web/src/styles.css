@@ -193,6 +193,13 @@ select {
   margin-bottom: 1rem;
 }
 
+.catalog-overview {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -225,6 +232,30 @@ select {
 .diagnostic-list {
   display: grid;
   gap: 0.7rem;
+}
+
+.source-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+}
+
+.source-card {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.source-card span,
+.source-card small {
+  color: #a8afb8;
+}
+
+.source-card strong {
+  font-size: 1rem;
 }
 
 .diagnostic-list {
@@ -324,6 +355,13 @@ select {
   color: #adb4bb;
 }
 
+.game-path {
+  margin: 0.4rem 0 0;
+  color: #8f98a3;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
 .game-footer {
   justify-content: space-between;
   align-items: center;
@@ -374,6 +412,10 @@ select {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .source-summary {
+    grid-template-columns: 1fr;
+  }
+
   .hero {
     flex-direction: column;
     align-items: stretch;
@@ -402,5 +444,9 @@ select {
 
   .simulation-grid {
     grid-template-columns: 1fr;
+  }
+
+  .catalog-overview {
+    grid-template-columns: repeat(2, max-content);
   }
 }

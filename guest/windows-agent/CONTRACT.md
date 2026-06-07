@@ -22,6 +22,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
 - `POST /launch`
   - accepts `GuestAgentLaunchRequest`
   - returns `GuestAgentLaunchResponse`
+  - current scaffold attempts a real Steam handoff for Steam titles on Windows before continuing the staged lifecycle model
 - `POST /terminate`
   - accepts `GuestAgentTerminateRequest`
   - terminates the active session by session id
@@ -38,6 +39,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
 - launch responses do not need to imply that streaming is already ready:
   - the guest may return a queued or preparing session first
   - `GET /events` is the source of truth for later launch, process-detected, and stream-ready transitions
+- a launch may still fail immediately if the guest cannot hand off the request to the real launcher process
 - launch failures may also arrive asynchronously through `GET /events` after an initially accepted launch response
 
 ## Current Host Assumptions

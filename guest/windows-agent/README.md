@@ -9,6 +9,10 @@ Current scaffold behavior:
 - scans real Steam library manifests when they are present on Windows
 - falls back to sample Steam data when no Windows Steam libraries are discovered
 - still serves sample Ubisoft data because Ubisoft Connect discovery is not implemented yet
+- attempts a real Steam handoff on Windows guests for Steam titles:
+  - prefers `steam.exe -applaunch <appid>` when Steam can be resolved
+  - falls back to `steam://run/<appid>` when only the Steam protocol path is available
+  - fails fast with `session.failed` if the Steam handoff itself errors
 - streams event envelopes over Server-Sent Events from `GET /events`
 - simulates a staged launch lifecycle:
   - launch queued
@@ -24,7 +28,7 @@ Current scaffold behavior:
 What it does not do yet:
 
 - run as a Windows service
-- launch real games or watch real processes
+- watch real game processes after the Steam handoff
 - inspect Sunshine readiness from the Windows guest
 - scan real Ubisoft Connect installs
 

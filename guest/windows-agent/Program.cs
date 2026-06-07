@@ -264,6 +264,48 @@ internal sealed class GuestAgentState
             SessionId = session.Id
         });
 
+        var launchAttempt = SteamGameLauncher.TryLaunch(game);
+
+        lock (sync)
+        {
+            game.GuestMetadata["lastLaunchMode"] = launchAttempt.Mode;
+            game.GuestMetadata["lastLaunchDetail"] = launchAttempt.Detail;
+        }
+
+        if (!launchAttempt.ShouldRunSimulatedLifecycle)
+        {
+            lock (sync)
+            {
+                session.RuntimeState = "failed";
+                session.GuestState = "error";
+                session.StreamState = "unavailable";
+                session.EndedAt = UtcNow();
+                session.LastError = launchAttempt.Detail;
+                status.AgentState = "error";
+                status.StreamHostState = "unavailable";
+                if (status.ActiveSessionId == session.Id)
+                {
+                    status.ActiveSessionId = null;
+                }
+            }
+
+            Publish(new SessionEvent
+            {
+                Id = Guid.NewGuid().ToString(),
+                Type = "session.failed",
+                Level = "error",
+                CreatedAt = UtcNow(),
+                Message = launchAttempt.Detail,
+                GameId = game.Id,
+                SessionId = session.Id
+            });
+
+            return new GuestAgentLaunchResponse
+            {
+                Session = CloneSession(session)
+            };
+        }
+
         var cancellationTokenSource = new CancellationTokenSource();
         lock (sync)
         {
@@ -767,7 +809,8 @@ internal sealed class GuestAgentState
                 {
                     ["installRoot"] = @"C:\Program Files (x86)\Steam",
                     ["launcherAppId"] = "578080",
-                    ["discoverySource"] = "sample-steam"
+                    ["discoverySource"] = "sample-steam",
+                    ["launchStrategy"] = "steam-handoff-or-simulated-fallback"
                 }
             }
         ];
@@ -791,6 +834,7 @@ internal sealed class GuestAgentState
                     ["installRoot"] = @"D:\Games\Ubisoft",
                     ["launcherAppId"] = "12345",
                     ["discoverySource"] = "sample-ubisoft",
+                    ["launchStrategy"] = "simulated-only",
                     ["simulatedOutcome"] = "fail-before-stream-ready",
                     ["simulatedFailure"] = "Sunshine stream handshake timed out before the game session became remotely playable."
                 }

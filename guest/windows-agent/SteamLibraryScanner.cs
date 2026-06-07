@@ -128,7 +128,8 @@ internal static partial class SteamLibraryScanner
                 ["launcherAppId"] = appId,
                 ["steamLibraryRoot"] = libraryRoot,
                 ["steamManifestPath"] = manifestPath,
-                ["discoverySource"] = "steam-appmanifest"
+                ["discoverySource"] = "steam-appmanifest",
+                ["launchStrategy"] = "steam-handoff-or-simulated-fallback"
             }
         };
 

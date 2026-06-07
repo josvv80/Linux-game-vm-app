@@ -329,3 +329,16 @@ The current working assumption is:
 - Verified after the catalog-provenance UI update:
   - `npm run build` passed
   - `npm test` passed
+- Extended the guest agent with a first real launcher handoff path for Steam titles:
+  - added `guest/windows-agent/SteamGameLauncher.cs`
+  - Steam titles now attempt a real Windows Steam handoff before the staged lifecycle continues
+  - prefers `steam.exe -applaunch <appid>` when the Steam executable can be resolved
+  - falls back to `steam://run/<appid>` when only the Steam protocol path is available
+  - if that launcher handoff fails, the guest now fails the session immediately with `session.failed` instead of pretending the launch was accepted
+- Added guest metadata for launch behavior:
+  - discovered and sample Steam titles now expose `launchStrategy=steam-handoff-or-simulated-fallback`
+  - sample Ubisoft titles now expose `launchStrategy=simulated-only`
+  - launches now record `lastLaunchMode` and `lastLaunchDetail` in guest metadata for future host-side diagnostics
+- Updated `guest/windows-agent/README.md` and `guest/windows-agent/CONTRACT.md` to document that Steam handoff is now attempted before the existing staged lifecycle model takes over.
+- Verified after the guest Steam handoff update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed

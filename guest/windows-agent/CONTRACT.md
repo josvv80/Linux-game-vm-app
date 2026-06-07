@@ -14,6 +14,10 @@ The real Windows agent is not implemented yet, but the host-side contract is now
   - returns `GuestAgentGameListResponse`
 - `GET /games`
   - returns `GuestAgentGameListResponse`
+- `GET /simulation`
+  - returns the current scaffolded launch simulation settings per game
+- `PUT /simulation`
+  - updates scaffolded launch simulation settings per game
 - `POST /launch`
   - accepts `GuestAgentLaunchRequest`
   - returns `GuestAgentLaunchResponse`

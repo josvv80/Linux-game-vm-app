@@ -25,6 +25,14 @@ app.MapPost("/scan", async (GuestAgentState state, CancellationToken cancellatio
 });
 
 app.MapGet("/games", (GuestAgentState state) => Results.Ok(state.ListGames()));
+app.MapGet("/simulation", (GuestAgentState state) => Results.Ok(state.GetSimulationSettings()));
+app.MapPut("/simulation", (GuestAgentSimulationUpdateRequest request, GuestAgentState state) =>
+{
+    var response = state.UpdateSimulation(request);
+    return response is null
+        ? Results.NotFound(new { message = $"Unknown game id: {request.GameId}" })
+        : Results.Ok(response);
+});
 
 app.MapPost("/launch", (GuestAgentLaunchRequest request, GuestAgentState state) =>
 {
@@ -60,6 +68,7 @@ internal sealed class GuestAgentState
     private readonly List<GameRecord> games = new();
     private readonly List<GameSession> sessions = new();
     private readonly Dictionary<string, CancellationTokenSource> launchLifecycles = new();
+    private readonly Dictionary<string, GuestAgentSimulationSettings> simulationProfiles = new();
 
     private string guestName = "Windows Gaming VM";
     private readonly string agentVersion = "0.1.0-scaffold";
@@ -77,6 +86,11 @@ internal sealed class GuestAgentState
             "Sunshine readiness is simulated through delayed launch lifecycle events."
         ]
     };
+
+    public GuestAgentState()
+    {
+        SeedDefaultSimulationProfiles();
+    }
 
     public GuestAgentHealthResponse GetHealth()
     {
@@ -128,6 +142,7 @@ internal sealed class GuestAgentState
 
         games.Clear();
         games.AddRange(CreateSampleGames());
+        ApplySimulationProfiles(games);
 
         status.AgentState = "ready";
         status.ScanState = "complete";
@@ -151,6 +166,55 @@ internal sealed class GuestAgentState
             Games = games.Select(CloneGame).ToList(),
             ScannedAt = UtcNow()
         };
+    }
+
+    public GuestAgentSimulationCatalogResponse GetSimulationSettings()
+    {
+        lock (sync)
+        {
+            return new GuestAgentSimulationCatalogResponse
+            {
+                Games = simulationProfiles.Values
+                    .OrderBy(profile => profile.GameId, StringComparer.Ordinal)
+                    .Select(CloneSimulationSettings)
+                    .ToList()
+            };
+        }
+    }
+
+    public GuestAgentSimulationCatalogResponse? UpdateSimulation(GuestAgentSimulationUpdateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.GameId))
+        {
+            return null;
+        }
+
+        lock (sync)
+        {
+            if (!simulationProfiles.TryGetValue(request.GameId, out var current))
+            {
+                return null;
+            }
+
+            current.Outcome = string.IsNullOrWhiteSpace(request.Outcome) ? current.Outcome : request.Outcome.Trim();
+            current.FailureMessage = request.FailureMessage ?? current.FailureMessage;
+            current.LaunchAcceptedDelayMs = request.LaunchAcceptedDelayMs ?? current.LaunchAcceptedDelayMs;
+            current.GameDetectedDelayMs = request.GameDetectedDelayMs ?? current.GameDetectedDelayMs;
+            current.StreamReadyDelayMs = request.StreamReadyDelayMs ?? current.StreamReadyDelayMs;
+
+            foreach (var game in games.Where(candidate => candidate.Id == request.GameId))
+            {
+                ApplySimulationProfile(game, current);
+            }
+
+            return new GuestAgentSimulationCatalogResponse
+            {
+                Games = simulationProfiles.Values
+                    .OrderBy(profile => profile.GameId, StringComparer.Ordinal)
+                    .Select(CloneSimulationSettings)
+                    .ToList()
+            };
+        }
     }
 
     public GuestAgentLaunchResponse? Launch(string gameId)
@@ -202,7 +266,11 @@ internal sealed class GuestAgentState
         {
             launchLifecycles[session.Id] = cancellationTokenSource;
         }
-        _ = RunLaunchLifecycleAsync(CloneGame(game), session.Id, cancellationTokenSource.Token);
+        _ = RunLaunchLifecycleAsync(
+            CloneGame(game),
+            session.Id,
+            CloneSimulationSettings(ResolveSimulationSettings(game.Id)),
+            cancellationTokenSource.Token);
 
         return new GuestAgentLaunchResponse
         {
@@ -290,11 +358,12 @@ internal sealed class GuestAgentState
     private async Task RunLaunchLifecycleAsync(
         GameRecord game,
         string sessionId,
+        GuestAgentSimulationSettings simulation,
         CancellationToken cancellationToken)
     {
         try
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(simulation.LaunchAcceptedDelayMs), cancellationToken);
 
             var startedSession = UpdateSession(
                 sessionId,
@@ -326,7 +395,7 @@ internal sealed class GuestAgentState
                 SessionId = sessionId
             });
 
-            await Task.Delay(TimeSpan.FromMilliseconds(350), cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(simulation.GameDetectedDelayMs), cancellationToken);
 
             var runningSession = UpdateSession(
                 sessionId,
@@ -356,11 +425,11 @@ internal sealed class GuestAgentState
                 SessionId = sessionId
             });
 
-            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(simulation.StreamReadyDelayMs), cancellationToken);
 
-            if (ShouldFailBeforeStreamReady(game))
+            if (ShouldFailBeforeStreamReady(simulation))
             {
-                var failureDetail = GetFailureMessage(game);
+                var failureDetail = GetFailureMessage(game, simulation);
                 var failedSession = UpdateSession(
                     sessionId,
                     session =>
@@ -489,18 +558,100 @@ internal sealed class GuestAgentState
         }
     }
 
-    private static bool ShouldFailBeforeStreamReady(GameRecord game)
+    private void SeedDefaultSimulationProfiles()
     {
-        return game.GuestMetadata.TryGetValue("simulatedOutcome", out var value) &&
-               value == "fail-before-stream-ready";
+        foreach (var profile in CreateDefaultSimulationSettings())
+        {
+            simulationProfiles[profile.GameId] = profile;
+        }
     }
 
-    private static string GetFailureMessage(GameRecord game)
+    private static List<GuestAgentSimulationSettings> CreateDefaultSimulationSettings()
     {
-        if (game.GuestMetadata.TryGetValue("simulatedFailure", out var value) &&
-            !string.IsNullOrWhiteSpace(value))
+        return
+        [
+            new GuestAgentSimulationSettings
+            {
+                GameId = "steam:app-578080",
+                Outcome = "success",
+                FailureMessage = "Simulated launch failure for PUBG: BATTLEGROUNDS.",
+                LaunchAcceptedDelayMs = 250,
+                GameDetectedDelayMs = 350,
+                StreamReadyDelayMs = 500
+            },
+            new GuestAgentSimulationSettings
+            {
+                GameId = "ubisoft-connect:anno-1800",
+                Outcome = "fail-before-stream-ready",
+                FailureMessage = "Sunshine stream handshake timed out before the game session became remotely playable.",
+                LaunchAcceptedDelayMs = 250,
+                GameDetectedDelayMs = 350,
+                StreamReadyDelayMs = 500
+            }
+        ];
+    }
+
+    private GuestAgentSimulationSettings ResolveSimulationSettings(string gameId)
+    {
+        lock (sync)
         {
-            return value;
+            if (simulationProfiles.TryGetValue(gameId, out var profile))
+            {
+                return CloneSimulationSettings(profile);
+            }
+        }
+
+        return new GuestAgentSimulationSettings
+        {
+            GameId = gameId,
+            Outcome = "success",
+            FailureMessage = $"Simulated launch failure for {gameId}.",
+            LaunchAcceptedDelayMs = 250,
+            GameDetectedDelayMs = 350,
+            StreamReadyDelayMs = 500
+        };
+    }
+
+    private void ApplySimulationProfiles(List<GameRecord> catalog)
+    {
+        foreach (var game in catalog)
+        {
+            ApplySimulationProfile(game, ResolveSimulationSettings(game.Id));
+        }
+    }
+
+    private static void ApplySimulationProfile(GameRecord game, GuestAgentSimulationSettings profile)
+    {
+        game.GuestMetadata["simulatedOutcome"] = profile.Outcome;
+        game.GuestMetadata["simulatedFailure"] = profile.FailureMessage;
+        game.GuestMetadata["launchAcceptedDelayMs"] = profile.LaunchAcceptedDelayMs.ToString();
+        game.GuestMetadata["gameDetectedDelayMs"] = profile.GameDetectedDelayMs.ToString();
+        game.GuestMetadata["streamReadyDelayMs"] = profile.StreamReadyDelayMs.ToString();
+    }
+
+    private static GuestAgentSimulationSettings CloneSimulationSettings(GuestAgentSimulationSettings profile)
+    {
+        return new GuestAgentSimulationSettings
+        {
+            GameId = profile.GameId,
+            Outcome = profile.Outcome,
+            FailureMessage = profile.FailureMessage,
+            LaunchAcceptedDelayMs = profile.LaunchAcceptedDelayMs,
+            GameDetectedDelayMs = profile.GameDetectedDelayMs,
+            StreamReadyDelayMs = profile.StreamReadyDelayMs
+        };
+    }
+
+    private static bool ShouldFailBeforeStreamReady(GuestAgentSimulationSettings simulation)
+    {
+        return simulation.Outcome == "fail-before-stream-ready";
+    }
+
+    private static string GetFailureMessage(GameRecord game, GuestAgentSimulationSettings simulation)
+    {
+        if (!string.IsNullOrWhiteSpace(simulation.FailureMessage))
+        {
+            return simulation.FailureMessage;
         }
 
         return $"Simulated launch failure for {game.Title}.";
@@ -629,6 +780,31 @@ internal sealed class GuestAgentGameListResponse
 {
     public List<GameRecord> Games { get; set; } = [];
     public string ScannedAt { get; set; } = "";
+}
+
+internal sealed class GuestAgentSimulationCatalogResponse
+{
+    public List<GuestAgentSimulationSettings> Games { get; set; } = [];
+}
+
+internal sealed class GuestAgentSimulationUpdateRequest
+{
+    public string GameId { get; set; } = "";
+    public string? Outcome { get; set; }
+    public string? FailureMessage { get; set; }
+    public int? LaunchAcceptedDelayMs { get; set; }
+    public int? GameDetectedDelayMs { get; set; }
+    public int? StreamReadyDelayMs { get; set; }
+}
+
+internal sealed class GuestAgentSimulationSettings
+{
+    public string GameId { get; set; } = "";
+    public string Outcome { get; set; } = "success";
+    public string FailureMessage { get; set; } = "";
+    public int LaunchAcceptedDelayMs { get; set; } = 250;
+    public int GameDetectedDelayMs { get; set; } = 350;
+    public int StreamReadyDelayMs { get; set; } = 500;
 }
 
 internal sealed class GuestAgentLaunchRequest

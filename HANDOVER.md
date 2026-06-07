@@ -275,3 +275,14 @@ The current working assumption is:
 - Verified after the host-side failed-session propagation update:
   - `npm test` passed
   - `npm run build` passed
+- Extended the Windows guest scaffold with explicit simulation controls:
+  - `GET /simulation` now returns per-game launch simulation settings
+  - `PUT /simulation` now updates per-game launch outcome and delay settings
+  - simulation settings now persist in memory independently from the scanned catalog and are re-applied on future scans
+- The guest scaffold can now simulate:
+  - successful staged launches
+  - failed-before-stream-ready launches
+  - slower launch, detect, and stream-ready timings without code edits
+- Updated `guest/windows-agent/CONTRACT.md` and `guest/windows-agent/README.md` to document the new simulation endpoints and usage.
+- Verified after the guest simulation-controls update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed

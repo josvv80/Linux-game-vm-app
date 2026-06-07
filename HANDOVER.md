@@ -192,3 +192,24 @@ The current working assumption is:
   - assume the GPU is handed fully to the Windows guest during play
   - treat Sunshine-in-guest and Moonlight-on-Android-box as the preferred play flow
 - Elevated remote-friendly lifecycle and recovery handling in the open actions so future implementation work does not assume a usable local Linux display while the VM is active.
+- Added explicit remote-play diagnostics to `packages/shared-types/src/index.ts` via `RuntimeDiagnostics` fields for:
+  - guest-agent reachability
+  - guest event-stream connection state
+  - remote-play readiness
+  - connected guest name
+  - last guest-agent, event-stream, and scan errors
+- Extended `packages/runtime-sdk/src/managed-vm-controller.ts` to track managed-VM diagnostic state directly instead of relying on warning strings alone.
+- Extended `packages/runtime-sdk/src/fake-environment.ts` so the fake provider also returns the richer diagnostics shape expected by the UI.
+- Extended `packages/runtime-sdk/src/managed-vm-controller.test.ts` to verify:
+  - diagnostics during a healthy managed-VM session
+  - diagnostics when guest health succeeds but `GET /events` is unavailable
+- Extended `apps/host-api/src/create-app.test.ts` so the managed-VM app-layer test also asserts `GET /api/diagnostics`.
+- Updated `apps/host-web/src/App.tsx` and `apps/host-web/src/styles.css` to surface remote-play diagnostics in the dashboard:
+  - guest agent reachable/offline
+  - event-stream connected/not connected
+  - remote-play ready/waiting
+  - last known failure detail
+  - connected guest name in the contract card
+- Verified after the diagnostics UI and runtime update:
+  - `npm test` passed
+  - `npm run build` passed

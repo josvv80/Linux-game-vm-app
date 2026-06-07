@@ -378,6 +378,19 @@ describe("host API", () => {
     expect(sessionsResponse.json()).toHaveLength(1);
     expect(sessionsResponse.json()[0].runtimeState).toBe("terminated");
 
+    const diagnosticsResponse = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics",
+    });
+    expect(diagnosticsResponse.statusCode).toBe(200);
+    expect(diagnosticsResponse.json()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: true,
+      remotePlayReady: true,
+      connectedGuestName: "Windows Gaming VM",
+      sessionCount: 1,
+    });
+
     expect(calls).toEqual([
       { path: "/health", method: "GET", body: null },
       { path: "/events", method: "GET", body: null },

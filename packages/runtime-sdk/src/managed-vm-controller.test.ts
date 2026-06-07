@@ -296,5 +296,63 @@ describe("ManagedVmController", () => {
       { path: "/launch", method: "POST", body: JSON.stringify({ gameId: "steam:app-400" }) },
       { path: "/terminate", method: "POST", body: JSON.stringify({ sessionId: "session-1" }) },
     ]);
+
+    expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: true,
+      remotePlayReady: true,
+      connectedGuestName: "Windows Gaming VM",
+      sessionCount: 1,
+    });
+  });
+
+  it("reports guest event stream availability problems in diagnostics", async () => {
+    const health: GuestAgentHealthResponse = {
+      guestName: "Windows Gaming VM",
+      agentVersion: "0.1.0",
+      status: {
+        guestPowerState: "running",
+        agentState: "ready",
+        streamHostState: "preparing",
+        scanState: "idle",
+        warnings: [],
+        connectedGuestName: "Windows Gaming VM",
+      },
+    };
+
+    const controller = new ManagedVmController(config, {
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input)
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+
+        if (url.pathname === "/health") {
+          return jsonResponse(health);
+        }
+
+        if (url.pathname === "/events") {
+          return jsonResponse({ message: "stream not available" }, 503);
+        }
+
+        return jsonResponse({ message: "Not found" }, 404);
+      },
+    });
+
+    const status = await controller.runtimeProvider.startGuest();
+    expect(status.guestPowerState).toBe("running");
+
+    expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: false,
+      remotePlayReady: false,
+      connectedGuestName: "Windows Gaming VM",
+      sessionCount: 0,
+    });
+    expect((await controller.runtimeProvider.getDiagnostics()).lastEventStreamError).toContain(
+      "stream not available",
+    );
   });
 });

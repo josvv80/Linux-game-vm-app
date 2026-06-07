@@ -188,9 +188,32 @@ select {
 
 .warning-list,
 .event-list,
-.game-list {
+.game-list,
+.diagnostic-list {
   display: grid;
   gap: 0.7rem;
+}
+
+.diagnostic-list {
+  margin-bottom: 1rem;
+}
+
+.diagnostic-item {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.diagnostic-item span {
+  color: #a8afb8;
+  font-size: 0.82rem;
+}
+
+.diagnostic-item strong {
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
 }
 
 .config-form {

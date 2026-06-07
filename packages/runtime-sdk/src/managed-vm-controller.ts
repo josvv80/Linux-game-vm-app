@@ -49,6 +49,10 @@ export class ManagedVmController {
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamTask: Promise<void> | null = null;
   private remoteEventsEnabled = false;
+  private lastGuestAgentError: string | null = null;
+  private lastEventStreamError: string | null = null;
+  private lastScanError: string | null = null;
+  private guestAgentReachable = false;
   private status: GuestStatusSnapshot;
 
   readonly runtimeProvider: RuntimeProvider;
@@ -123,6 +127,8 @@ export class ManagedVmController {
     try {
       const health = await this.fetchJson<GuestAgentHealthResponse>("/health");
       this.applyRemoteHealth(health);
+      this.guestAgentReachable = true;
+      this.lastGuestAgentError = null;
 
       if (!wasRunning) {
         this.pushEvent(
@@ -136,6 +142,8 @@ export class ManagedVmController {
       return this.getStatus();
     } catch (error) {
       const detail = toErrorMessage(error);
+      this.guestAgentReachable = false;
+      this.lastGuestAgentError = detail;
       this.status = this.createLocalStatus(
         {
           ...this.status,
@@ -181,10 +189,31 @@ export class ManagedVmController {
   }
 
   async getDiagnostics(): Promise<RuntimeDiagnostics> {
-    return {
+    const diagnostics: RuntimeDiagnostics = {
       warnings: [...this.status.warnings],
       sessionCount: this.sessions.length,
+      guestAgentReachable: this.guestAgentReachable,
+      eventStreamConnected: this.remoteEventsEnabled,
+      remotePlayReady: this.status.streamHostState === "ready",
     };
+
+    if (this.status.connectedGuestName) {
+      diagnostics.connectedGuestName = this.status.connectedGuestName;
+    }
+
+    if (this.lastGuestAgentError) {
+      diagnostics.lastGuestAgentError = this.lastGuestAgentError;
+    }
+
+    if (this.lastEventStreamError) {
+      diagnostics.lastEventStreamError = this.lastEventStreamError;
+    }
+
+    if (this.lastScanError) {
+      diagnostics.lastScanError = this.lastScanError;
+    }
+
+    return diagnostics;
   }
 
   async scanGames(): Promise<GameRecord[]> {
@@ -203,6 +232,7 @@ export class ManagedVmController {
       });
 
       this.replaceGames(response.games);
+      this.lastScanError = null;
       this.status = this.createLocalStatus({
         ...this.status,
         agentState: "ready",
@@ -215,6 +245,7 @@ export class ManagedVmController {
       return this.listGames();
     } catch (error) {
       const detail = toErrorMessage(error);
+      this.lastScanError = detail;
       this.status = this.createLocalStatus(
         {
           ...this.status,
@@ -355,11 +386,13 @@ export class ManagedVmController {
       }
 
       this.remoteEventsEnabled = true;
+      this.lastEventStreamError = null;
       this.eventStreamTask = this.consumeEventStream(response.body, abortController.signal)
         .catch((error) => {
           if (!abortController.signal.aborted) {
+            this.lastEventStreamError = toErrorMessage(error);
             this.status = this.createLocalStatus(this.status, [
-              `Guest event stream disconnected: ${toErrorMessage(error)}`,
+              `Guest event stream disconnected: ${this.lastEventStreamError}`,
             ]);
           }
         })
@@ -374,8 +407,9 @@ export class ManagedVmController {
       this.eventStreamAbortController = null;
       this.eventStreamTask = null;
       this.remoteEventsEnabled = false;
+      this.lastEventStreamError = toErrorMessage(error);
       this.status = this.createLocalStatus(this.status, [
-        `Guest event stream is unavailable: ${toErrorMessage(error)}`,
+        `Guest event stream is unavailable: ${this.lastEventStreamError}`,
       ]);
     }
   }
@@ -490,6 +524,8 @@ export class ManagedVmController {
   }
 
   private applyRemoteHealth(response: GuestAgentHealthResponse) {
+    this.guestAgentReachable = true;
+    this.lastGuestAgentError = null;
     this.status = this.createLocalStatus({
       ...clone(response.status),
       guestPowerState: "running",

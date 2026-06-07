@@ -94,6 +94,13 @@ export interface LaunchResult {
 export interface RuntimeDiagnostics {
   warnings: string[];
   sessionCount: number;
+  guestAgentReachable?: boolean;
+  eventStreamConnected?: boolean;
+  remotePlayReady?: boolean;
+  connectedGuestName?: string;
+  lastGuestAgentError?: string;
+  lastEventStreamError?: string;
+  lastScanError?: string;
 }
 
 export interface RuntimeProvider {

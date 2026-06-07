@@ -219,10 +219,19 @@ export class FakeEnvironment {
   }
 
   async getDiagnostics(): Promise<RuntimeDiagnostics> {
-    return {
+    const diagnostics: RuntimeDiagnostics = {
       warnings: [...this.status.warnings],
       sessionCount: this.sessions.length,
+      guestAgentReachable: this.status.guestPowerState === "running",
+      eventStreamConnected: this.status.guestPowerState === "running",
+      remotePlayReady: this.status.streamHostState === "ready",
     };
+
+    if (this.status.connectedGuestName) {
+      diagnostics.connectedGuestName = this.status.connectedGuestName;
+    }
+
+    return diagnostics;
   }
 
   async scanGames(): Promise<GameRecord[]> {

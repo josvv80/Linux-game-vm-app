@@ -7,6 +7,7 @@ import type {
   GuestStatusSnapshot,
   HostConfig,
   LauncherId,
+  RuntimeDiagnostics,
   SessionEvent,
   RuntimeProviderId,
 } from "@game-vm-hub/shared-types";
@@ -63,6 +64,11 @@ const defaultConfig: HostConfig = {
   },
 };
 
+const defaultDiagnostics: RuntimeDiagnostics = {
+  warnings: [],
+  sessionCount: 0,
+};
+
 async function postJson<T>(path: string, body?: object): Promise<T> {
   const requestInit: RequestInit = {
     method: "POST",
@@ -96,6 +102,7 @@ export function App() {
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics>(defaultDiagnostics);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -105,14 +112,31 @@ export function App() {
     });
   });
 
+  const refreshDiagnostics = useEffectEvent(async (reportErrors = false) => {
+    try {
+      const nextDiagnostics = (await fetch("/api/diagnostics").then((response) =>
+        response.json(),
+      )) as RuntimeDiagnostics;
+
+      startTransition(() => {
+        setDiagnostics(nextDiagnostics);
+      });
+    } catch (error) {
+      if (reportErrors) {
+        setErrorMessage((error as Error).message);
+      }
+    }
+  });
+
   useEffect(() => {
     let active = true;
 
     async function loadInitialState() {
-      const [status, games, sessions] = await Promise.all([
+      const [status, games, sessions, diagnostics] = await Promise.all([
         fetch("/api/status").then((response) => response.json()) as Promise<GuestStatusSnapshot>,
         fetch("/api/catalog/games").then((response) => response.json()) as Promise<GameRecord[]>,
         fetch("/api/sessions").then((response) => response.json()) as Promise<GameSession[]>,
+        fetch("/api/diagnostics").then((response) => response.json()) as Promise<RuntimeDiagnostics>,
       ]);
       const nextConfig = (await fetch("/api/config").then((response) => response.json())) as HostConfig;
 
@@ -121,6 +145,7 @@ export function App() {
       }
 
       setConfig(nextConfig);
+      setDiagnostics(diagnostics);
       setSnapshot((current) => ({
         status,
         games,
@@ -158,6 +183,16 @@ export function App() {
     };
   }, [applySnapshot]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void refreshDiagnostics(false);
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshDiagnostics]);
+
   const filteredGames = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase();
 
@@ -186,6 +221,7 @@ export function App() {
       } else {
         await postJson("/api/catalog/scan");
       }
+      await refreshDiagnostics(false);
     } catch (error) {
       setErrorMessage((error as Error).message);
     } finally {
@@ -199,6 +235,7 @@ export function App() {
 
     try {
       await postJson("/api/sessions", { gameId });
+      await refreshDiagnostics(false);
     } catch (error) {
       setErrorMessage((error as Error).message);
     } finally {
@@ -212,6 +249,7 @@ export function App() {
 
     try {
       await postJson(`/api/sessions/${sessionId}/terminate`);
+      await refreshDiagnostics(false);
     } catch (error) {
       setErrorMessage((error as Error).message);
     } finally {
@@ -238,6 +276,7 @@ export function App() {
       }
 
       setConfig((await response.json()) as HostConfig);
+      await refreshDiagnostics(false);
     } catch (error) {
       setErrorMessage((error as Error).message);
     } finally {
@@ -298,6 +337,29 @@ export function App() {
               <dd>{snapshot.games.length}</dd>
             </div>
           </dl>
+          <div className="diagnostic-list">
+            <div className="diagnostic-item">
+              <span>Guest agent</span>
+              <strong>{diagnostics.guestAgentReachable ? "reachable" : "offline"}</strong>
+            </div>
+            <div className="diagnostic-item">
+              <span>Event stream</span>
+              <strong>{diagnostics.eventStreamConnected ? "connected" : "not connected"}</strong>
+            </div>
+            <div className="diagnostic-item">
+              <span>Remote play</span>
+              <strong>{diagnostics.remotePlayReady ? "ready" : "waiting"}</strong>
+            </div>
+            <div className="diagnostic-item">
+              <span>Last failure</span>
+              <strong>
+                {diagnostics.lastEventStreamError ??
+                  diagnostics.lastGuestAgentError ??
+                  diagnostics.lastScanError ??
+                  "none"}
+              </strong>
+            </div>
+          </div>
           {errorMessage ? <p className="error-banner">{errorMessage}</p> : null}
           <form className="config-form" onSubmit={(event) => void saveConfig(event)}>
             <label>
@@ -439,6 +501,7 @@ export function App() {
             <span>Guest agent target</span>
             <strong>{config.managedVm.guestAgentBaseUrl}</strong>
             <span>Stream mode {config.managedVm.streamMode}</span>
+            <span>Diagnostics guest {diagnostics.connectedGuestName ?? "unknown"}</span>
           </div>
           <div className="event-list">
             {snapshot.events.map((event: SessionEvent) => (

@@ -33,6 +33,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
 - launch responses do not need to imply that streaming is already ready:
   - the guest may return a queued or preparing session first
   - `GET /events` is the source of truth for later launch, process-detected, and stream-ready transitions
+- launch failures may also arrive asynchronously through `GET /events` after an initially accepted launch response
 
 ## Current Host Assumptions
 

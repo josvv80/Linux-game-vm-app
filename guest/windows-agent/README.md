@@ -13,6 +13,8 @@ Current scaffold behavior:
   - launcher accepted
   - game detected
   - stream ready
+- includes one intentional sample failure path:
+  - the scaffolded `Anno 1800` entry fails before stream readiness so host recovery and failure UI can be exercised
 
 What it does not do yet:
 

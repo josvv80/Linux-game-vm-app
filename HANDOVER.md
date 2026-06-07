@@ -253,3 +253,10 @@ The current working assumption is:
 - Updated `guest/windows-agent/CONTRACT.md` and `guest/windows-agent/README.md` to document that launch responses may be queued/preparing and that `GET /events` is the source of truth for later readiness transitions.
 - Verified after the guest scaffold lifecycle update:
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed
+- Added a guest-side simulated failure path in `guest/windows-agent/Program.cs`:
+  - the scaffolded `Anno 1800` sample now fails before stream readiness
+  - the guest emits `session.failed` as an asynchronous SSE event after an initially accepted launch
+  - failed sessions now set `runtimeState=failed`, `guestState=error`, `streamState=unavailable`, and `lastError`
+- Updated `guest/windows-agent/CONTRACT.md` and `guest/windows-agent/README.md` to document that launch failures may also arrive asynchronously after the initial launch response.
+- Verified after the guest scaffold failure-path update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed

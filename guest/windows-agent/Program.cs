@@ -358,6 +358,48 @@ internal sealed class GuestAgentState
 
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
 
+            if (ShouldFailBeforeStreamReady(game))
+            {
+                var failureDetail = GetFailureMessage(game);
+                var failedSession = UpdateSession(
+                    sessionId,
+                    session =>
+                    {
+                        session.RuntimeState = "failed";
+                        session.GuestState = "error";
+                        session.StreamState = "unavailable";
+                        session.EndedAt = UtcNow();
+                        session.LastError = failureDetail;
+                    },
+                    statusUpdate =>
+                    {
+                        statusUpdate.AgentState = "error";
+                        statusUpdate.StreamHostState = "unavailable";
+                        if (statusUpdate.ActiveSessionId == sessionId)
+                        {
+                            statusUpdate.ActiveSessionId = null;
+                        }
+                    });
+
+                if (failedSession is null)
+                {
+                    return;
+                }
+
+                Publish(new SessionEvent
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Type = "session.failed",
+                    Level = "error",
+                    CreatedAt = UtcNow(),
+                    Message = failureDetail,
+                    GameId = game.Id,
+                    SessionId = sessionId
+                });
+
+                return;
+            }
+
             var readySession = UpdateSession(
                 sessionId,
                 session =>
@@ -445,6 +487,23 @@ internal sealed class GuestAgentState
         {
             subscriber.Writer.TryWrite(envelope);
         }
+    }
+
+    private static bool ShouldFailBeforeStreamReady(GameRecord game)
+    {
+        return game.GuestMetadata.TryGetValue("simulatedOutcome", out var value) &&
+               value == "fail-before-stream-ready";
+    }
+
+    private static string GetFailureMessage(GameRecord game)
+    {
+        if (game.GuestMetadata.TryGetValue("simulatedFailure", out var value) &&
+            !string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        return $"Simulated launch failure for {game.Title}.";
     }
 
     private GuestStatusSnapshot CloneStatus()
@@ -535,7 +594,9 @@ internal sealed class GuestAgentState
                 GuestMetadata = new Dictionary<string, string>
                 {
                     ["installRoot"] = @"D:\Games\Ubisoft",
-                    ["launcherAppId"] = "12345"
+                    ["launcherAppId"] = "12345",
+                    ["simulatedOutcome"] = "fail-before-stream-ready",
+                    ["simulatedFailure"] = "Sunshine stream handshake timed out before the game session became remotely playable."
                 }
             }
         ];

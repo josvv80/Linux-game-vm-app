@@ -414,4 +414,99 @@ describe("ManagedVmController", () => {
       connectedGuestName: "Windows Gaming VM",
     });
   });
+
+  it("updates the tracked session when the guest emits a failed launch lifecycle", async () => {
+    const stream = createEventStream();
+    streams.push(stream);
+
+    const queuedSession: GameSession = {
+      id: "session-failed",
+      gameId: "ubisoft-connect:anno-1800",
+      runtimeState: "queued",
+      guestState: "online",
+      streamState: "preparing",
+      startedAt: "2026-06-07T09:10:00.000Z",
+    };
+
+    const controller = new ManagedVmController(config, {
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input)
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+
+        if (url.pathname === "/health") {
+          return jsonResponse({
+            guestName: "Windows Gaming VM",
+            agentVersion: "0.1.0",
+            status: {
+              guestPowerState: "running",
+              agentState: "ready",
+              streamHostState: "preparing",
+              scanState: "idle",
+              warnings: [],
+              connectedGuestName: "Windows Gaming VM",
+            },
+          } satisfies GuestAgentHealthResponse);
+        }
+
+        if (url.pathname === "/events") {
+          return stream.response;
+        }
+
+        if (url.pathname === "/launch") {
+          stream.emit({
+            event: {
+              id: "event-failed",
+              type: "session.failed",
+              level: "error",
+              createdAt: "2026-06-07T09:10:02.000Z",
+              message:
+                "Sunshine stream handshake timed out before the game session became remotely playable.",
+              gameId: "ubisoft-connect:anno-1800",
+              sessionId: "session-failed",
+            },
+            status: {
+              guestPowerState: "running",
+              agentState: "error",
+              streamHostState: "unavailable",
+              scanState: "idle",
+              warnings: [],
+              connectedGuestName: "Windows Gaming VM",
+            },
+          });
+
+          return jsonResponse({
+            session: queuedSession,
+          } satisfies GuestAgentLaunchResponse);
+        }
+
+        return jsonResponse({ message: "Not found" }, 404);
+      },
+    });
+
+    await controller.runtimeProvider.startGuest();
+    const launch = await controller.guestConnection.launchGame("ubisoft-connect:anno-1800");
+    await flushAsyncWork();
+
+    expect(launch.session.runtimeState).toBe("queued");
+
+    const snapshot = controller.snapshot();
+    expect(snapshot.sessions[0]).toMatchObject({
+      id: "session-failed",
+      runtimeState: "failed",
+      guestState: "error",
+      streamState: "unavailable",
+      lastError:
+        "Sunshine stream handshake timed out before the game session became remotely playable.",
+    });
+
+    expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
+      remotePlayReady: false,
+      lastSessionError:
+        "Sunshine stream handshake timed out before the game session became remotely playable.",
+    });
+  });
 });

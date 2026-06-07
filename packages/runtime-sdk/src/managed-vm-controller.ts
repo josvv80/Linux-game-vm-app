@@ -45,6 +45,7 @@ export class ManagedVmController {
   private readonly events: SessionEvent[] = [];
   private readonly sessions: GameSession[] = [];
   private readonly games: GameRecord[] = [];
+  private readonly pendingSessionEvents = new Map<string, SessionEvent[]>();
   private readonly fetchImpl: typeof fetch;
   private eventStreamAbortController: AbortController | null = null;
   private eventStreamTask: Promise<void> | null = null;
@@ -52,6 +53,7 @@ export class ManagedVmController {
   private lastGuestAgentError: string | null = null;
   private lastEventStreamError: string | null = null;
   private lastScanError: string | null = null;
+  private lastSessionError: string | null = null;
   private guestAgentReachable = false;
   private status: GuestStatusSnapshot;
 
@@ -215,6 +217,10 @@ export class ManagedVmController {
       diagnostics.lastScanError = this.lastScanError;
     }
 
+    if (this.lastSessionError) {
+      diagnostics.lastSessionError = this.lastSessionError;
+    }
+
     return diagnostics;
   }
 
@@ -330,6 +336,7 @@ export class ManagedVmController {
 
     const session = (await response.json()) as GameSession;
     this.upsertSession(session);
+    this.lastSessionError = session.lastError ?? null;
 
     if (this.status.activeSessionId === session.id) {
       const nextStatus = {
@@ -502,15 +509,7 @@ export class ManagedVmController {
 
     this.status = this.createLocalStatus(nextStatus);
 
-    if (envelope.event.type === "session.ended" && envelope.event.sessionId) {
-      const session = this.sessions.find((candidate) => candidate.id === envelope.event.sessionId);
-
-      if (session) {
-        session.runtimeState = "ended";
-        session.streamState = "unavailable";
-        session.endedAt ??= envelope.event.createdAt;
-      }
-    }
+    this.applySessionEvent(envelope.event);
 
     this.appendEvent(envelope.event);
   }
@@ -548,13 +547,78 @@ export class ManagedVmController {
 
   private upsertSession(session: GameSession) {
     const existingIndex = this.sessions.findIndex((candidate) => candidate.id === session.id);
+    const nextSession = clone(session);
 
     if (existingIndex === -1) {
-      this.sessions.unshift(clone(session));
+      this.sessions.unshift(nextSession);
+      this.applyPendingSessionEvents(nextSession.id);
       return;
     }
 
-    this.sessions[existingIndex] = clone(session);
+    this.sessions[existingIndex] = nextSession;
+    this.applyPendingSessionEvents(nextSession.id);
+  }
+
+  private applySessionEvent(event: SessionEvent) {
+    if (!event.sessionId) {
+      return;
+    }
+
+    const session = this.sessions.find((candidate) => candidate.id === event.sessionId);
+
+    if (!session) {
+      const pendingEvents = this.pendingSessionEvents.get(event.sessionId) ?? [];
+      pendingEvents.push(clone(event));
+      this.pendingSessionEvents.set(event.sessionId, pendingEvents);
+      return;
+    }
+
+    switch (event.type) {
+      case "session.launch.started":
+        session.runtimeState = "launching";
+        session.guestState = "online";
+        session.streamState = "preparing";
+        break;
+      case "session.game.detected":
+        session.runtimeState = "running";
+        session.guestState = "ready";
+        break;
+      case "session.streaming.ready":
+        session.runtimeState = "running";
+        session.guestState = "ready";
+        session.streamState = "ready";
+        break;
+      case "session.ended":
+        session.runtimeState = "ended";
+        session.streamState = "unavailable";
+        session.endedAt ??= event.createdAt;
+        this.lastSessionError = session.lastError ?? null;
+        break;
+      case "session.failed":
+        session.runtimeState = "failed";
+        session.guestState = "error";
+        session.streamState = "unavailable";
+        session.endedAt ??= event.createdAt;
+        session.lastError = event.message;
+        this.lastSessionError = event.message;
+        break;
+      default:
+        break;
+    }
+  }
+
+  private applyPendingSessionEvents(sessionId: string) {
+    const pendingEvents = this.pendingSessionEvents.get(sessionId);
+
+    if (!pendingEvents || pendingEvents.length === 0) {
+      return;
+    }
+
+    this.pendingSessionEvents.delete(sessionId);
+
+    for (const event of pendingEvents) {
+      this.applySessionEvent(event);
+    }
   }
 
   private pushLocalEvent(

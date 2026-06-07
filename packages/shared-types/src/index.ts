@@ -101,6 +101,7 @@ export interface RuntimeDiagnostics {
   lastGuestAgentError?: string;
   lastEventStreamError?: string;
   lastScanError?: string;
+  lastSessionError?: string;
 }
 
 export interface RuntimeProvider {

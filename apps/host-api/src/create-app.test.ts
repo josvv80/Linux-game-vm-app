@@ -495,4 +495,134 @@ describe("host API", () => {
 
     stream.close();
   });
+
+  it("surfaces a guest-side failed launch through the host API session model", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+    const stream = createEventStream();
+
+    const managedConfig: HostConfig = {
+      runtimeProvider: "managed-vm",
+      managedVm: {
+        vmName: "windows-vfio",
+        guestAgentBaseUrl: "http://127.0.0.1:8765",
+        streamMode: "sunshine-moonlight",
+      },
+    };
+
+    const runtimeFactory = (config: HostConfig) =>
+      new ManagedVmController(config, {
+        fetchImpl: async (input) => {
+          const url =
+            typeof input === "string"
+              ? new URL(input)
+              : input instanceof URL
+                ? input
+                : new URL(input.url);
+
+          if (url.pathname === "/health") {
+            return jsonResponse({
+              guestName: "Windows Gaming VM",
+              agentVersion: "0.1.0",
+              status: {
+                guestPowerState: "running",
+                agentState: "ready",
+                streamHostState: "preparing",
+                scanState: "idle",
+                warnings: [],
+                connectedGuestName: "Windows Gaming VM",
+              },
+            } satisfies GuestAgentHealthResponse);
+          }
+
+          if (url.pathname === "/events") {
+            return stream.response;
+          }
+
+          if (url.pathname === "/launch") {
+            stream.emit({
+              event: {
+                id: "event-failed",
+                type: "session.failed",
+                level: "error",
+                createdAt: "2026-06-07T09:10:02.000Z",
+                message:
+                  "Sunshine stream handshake timed out before the game session became remotely playable.",
+                gameId: "ubisoft-connect:anno-1800",
+                sessionId: "session-failed",
+              },
+              status: {
+                guestPowerState: "running",
+                agentState: "error",
+                streamHostState: "unavailable",
+                scanState: "idle",
+                warnings: [],
+                connectedGuestName: "Windows Gaming VM",
+              },
+            });
+
+            return jsonResponse({
+              session: {
+                id: "session-failed",
+                gameId: "ubisoft-connect:anno-1800",
+                runtimeState: "queued",
+                guestState: "online",
+                streamState: "preparing",
+                startedAt: "2026-06-07T09:10:00.000Z",
+              },
+            } satisfies GuestAgentLaunchResponse);
+          }
+
+          return jsonResponse({ message: "Not found" }, 404);
+        },
+      });
+
+    await writeFile(configPath, `${JSON.stringify(managedConfig, null, 2)}\n`, "utf8");
+
+    const app = buildApp(
+      new AppState(new ConfigStore(configPath), defaultHostConfig, runtimeFactory),
+    );
+    apps.push(app);
+
+    await app.inject({
+      method: "POST",
+      url: "/api/runtime/start",
+    });
+
+    const launchResponse = await app.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: {
+        gameId: "ubisoft-connect:anno-1800",
+      },
+    });
+    expect(launchResponse.statusCode).toBe(200);
+
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: "/api/sessions",
+    });
+    expect(sessionsResponse.statusCode).toBe(200);
+    expect(sessionsResponse.json()[0]).toMatchObject({
+      id: "session-failed",
+      runtimeState: "failed",
+      guestState: "error",
+      streamState: "unavailable",
+      lastError:
+        "Sunshine stream handshake timed out before the game session became remotely playable.",
+    });
+
+    const diagnosticsResponse = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics",
+    });
+    expect(diagnosticsResponse.statusCode).toBe(200);
+    expect(diagnosticsResponse.json()).toMatchObject({
+      lastSessionError:
+        "Sunshine stream handshake timed out before the game session became remotely playable.",
+      remotePlayReady: false,
+    });
+
+    stream.close();
+  });
 });

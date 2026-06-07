@@ -59,9 +59,23 @@ function deriveRecoveryState(
   config: HostConfig,
   diagnostics: RuntimeDiagnostics,
   status: GuestStatusSnapshot,
+  latestSession: GameSession | undefined,
 ) {
   if (config.runtimeProvider !== "managed-vm") {
     return null;
+  }
+
+  if (latestSession?.runtimeState === "failed") {
+    return {
+      tone: "danger" as const,
+      title: "Guest launch failed",
+      detail:
+        latestSession.lastError ??
+        diagnostics.lastSessionError ??
+        "The Windows guest reported a failed launch before remote play became ready.",
+      action: diagnostics.guestAgentReachable ? ("recover" as const) : ("start" as const),
+      actionLabel: diagnostics.guestAgentReachable ? "Recover link" : "Start guest",
+    };
   }
 
   if (!diagnostics.guestAgentReachable) {
@@ -260,7 +274,8 @@ export function App() {
       session.id === snapshot.status.activeSessionId &&
       (session.runtimeState === "launching" || session.runtimeState === "running"),
   );
-  const recoveryState = deriveRecoveryState(config, diagnostics, snapshot.status);
+  const latestSession = snapshot.sessions[0];
+  const recoveryState = deriveRecoveryState(config, diagnostics, snapshot.status, latestSession);
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -444,6 +459,7 @@ export function App() {
               <strong>
                 {diagnostics.lastEventStreamError ??
                   diagnostics.lastGuestAgentError ??
+                  diagnostics.lastSessionError ??
                   diagnostics.lastScanError ??
                   "none"}
               </strong>

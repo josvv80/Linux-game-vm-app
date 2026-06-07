@@ -260,3 +260,18 @@ The current working assumption is:
 - Updated `guest/windows-agent/CONTRACT.md` and `guest/windows-agent/README.md` to document that launch failures may also arrive asynchronously after the initial launch response.
 - Verified after the guest scaffold failure-path update:
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed
+- Extended `packages/runtime-sdk/src/managed-vm-controller.ts` to apply guest session lifecycle events to tracked sessions instead of treating them as timeline-only messages:
+  - `session.launch.started`
+  - `session.game.detected`
+  - `session.streaming.ready`
+  - `session.ended`
+  - `session.failed`
+- Added a queue for guest session events that arrive before the corresponding launch response session exists, so the managed-VM host model now handles real event/response races correctly.
+- Extended diagnostics with `lastSessionError` in `packages/shared-types/src/index.ts` and surfaced guest-side session failure state through the host model.
+- Extended verification:
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now covers a failed managed-VM launch lifecycle
+  - `apps/host-api/src/create-app.test.ts` now verifies that a guest-side failed launch is visible through `/api/sessions` and `/api/diagnostics`
+  - `apps/host-web/src/App.tsx` now treats a failed latest session as a first-class recovery state in the banner logic
+- Verified after the host-side failed-session propagation update:
+  - `npm test` passed
+  - `npm run build` passed

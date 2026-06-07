@@ -1,6 +1,6 @@
 # Game VM Hub Handover
 
-Last updated: 2026-06-06
+Last updated: 2026-06-07
 
 ## Goal
 
@@ -31,6 +31,7 @@ The current working assumption is:
 - Storage design matters early; game installs may need dedicated passthrough storage rather than simple shared folders.
 - Anti-cheat and VM detection must be treated as compatibility risks, not ignored.
 - This machine currently shows AMD-V support, 32 GiB RAM, and one visible discrete AMD GPU, so single-GPU VFIO should be treated as a provider-specific risk rather than as a control-plane default.
+- A single-GPU path remains acceptable for this machine if the control plane is treated as remote-first and gameplay happens through guest streaming rather than the Linux host display.
 
 ## Decisions
 
@@ -46,6 +47,12 @@ The current working assumption is:
 - Host configuration is persisted to `data/host-config.json` when saved through the UI or API.
 - The real Windows guest contract is now documented in `guest/windows-agent/CONTRACT.md`.
 - The managed-VM path now assumes guest-agent HTTP integration can progress ahead of full libvirt/QEMU lifecycle automation.
+- The preferred near-term deployment model is now single-GPU passthrough with remote play:
+  - Linux host starts and manages the VM
+  - Windows guest owns the GPU during play
+  - Sunshine runs in the guest
+  - Moonlight on an Android box or another remote client is the primary play surface
+  - the host web UI should remain usable remotely rather than assuming a live local Linux monitor
 - Git is now initialized locally on branch `main` with user identity configured as `josvv80 <jos@uwbs.nl>`.
 - Sudo and SSH-related credentials must not be written into `HANDOVER.md`, committed into Git, or stored in project files.
 - GitHub SSH is configured to use a dedicated key at `/home/jos/.ssh/id_ed25519_github` rather than reusing a server key.
@@ -56,7 +63,11 @@ The current working assumption is:
 - Replace the managed VM scaffold with real libvirt/QEMU lifecycle control and guest-agent event consumption.
 - Harden the guest registration and event contract for reconnect and error cases.
 - Implement real Steam discovery and launch execution.
-- Decide how far to push single-GPU VFIO automation on this machine versus deferring it behind a safer managed-VM provider.
+- Add explicit remote-play lifecycle handling for the single-GPU path:
+  - stream-ready signaling
+  - guest unreachable / handoff failure diagnostics
+  - recovery after guest stop or VM failure
+- Keep the UI and host API biased toward remote administration rather than requiring the host display during guest runtime.
 
 ## Change Log
 
@@ -173,3 +184,11 @@ The current working assumption is:
 - Verified after the host API managed-VM test addition:
   - `npm test` passed
   - `npm run build` passed
+
+### 2026-06-07
+
+- Updated the project plan for the confirmed single-GPU deployment direction:
+  - treat the Linux host as a remote-manageable control plane
+  - assume the GPU is handed fully to the Windows guest during play
+  - treat Sunshine-in-guest and Moonlight-on-Android-box as the preferred play flow
+- Elevated remote-friendly lifecycle and recovery handling in the open actions so future implementation work does not assume a usable local Linux display while the VM is active.

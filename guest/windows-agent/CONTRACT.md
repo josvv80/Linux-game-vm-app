@@ -30,6 +30,9 @@ The real Windows agent is not implemented yet, but the host-side contract is now
 - report scan status transitions and launch lifecycle events
 - keep the host informed of the active session id
 - provide actionable error messages instead of generic failures
+- launch responses do not need to imply that streaming is already ready:
+  - the guest may return a queued or preparing session first
+  - `GET /events` is the source of truth for later launch, process-detected, and stream-ready transitions
 
 ## Current Host Assumptions
 

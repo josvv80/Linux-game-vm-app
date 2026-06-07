@@ -8,6 +8,11 @@ Current scaffold behavior:
 - keeps in-memory guest status, catalog, sessions, and recent event history
 - serves sample Steam and Ubisoft entries instead of real launcher discovery
 - streams event envelopes over Server-Sent Events from `GET /events`
+- simulates a staged launch lifecycle:
+  - launch queued
+  - launcher accepted
+  - game detected
+  - stream ready
 
 What it does not do yet:
 

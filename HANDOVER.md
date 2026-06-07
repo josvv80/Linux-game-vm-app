@@ -239,3 +239,17 @@ The current working assumption is:
 - Verified after the degraded-state UI update:
   - `npm test` passed
   - `npm run build` passed
+- Improved the Windows guest scaffold launch realism in `guest/windows-agent/Program.cs`:
+  - launch now returns an initial queued session instead of immediately claiming stream readiness
+  - background lifecycle events now progress through:
+    - `session.launch.requested`
+    - `session.launch.started`
+    - `session.game.detected`
+    - `session.streaming.ready`
+  - guest status now starts closer to a real remote-play boot path:
+    - agent online
+    - stream unavailable until the staged launch flow reaches ready
+  - guest launch lifecycles are now cancellable when a session is terminated
+- Updated `guest/windows-agent/CONTRACT.md` and `guest/windows-agent/README.md` to document that launch responses may be queued/preparing and that `GET /events` is the source of truth for later readiness transitions.
+- Verified after the guest scaffold lifecycle update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed

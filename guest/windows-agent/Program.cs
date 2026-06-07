@@ -54,24 +54,27 @@ app.Run();
 
 internal sealed class GuestAgentState
 {
+    private readonly Lock sync = new();
     private readonly ConcurrentDictionary<Guid, Channel<GuestAgentEventEnvelope>> subscribers = new();
     private readonly List<GuestAgentEventEnvelope> recentEvents = new();
     private readonly List<GameRecord> games = new();
     private readonly List<GameSession> sessions = new();
+    private readonly Dictionary<string, CancellationTokenSource> launchLifecycles = new();
 
     private string guestName = "Windows Gaming VM";
     private readonly string agentVersion = "0.1.0-scaffold";
     private GuestStatusSnapshot status = new()
     {
         GuestPowerState = "running",
-        AgentState = "ready",
-        StreamHostState = "ready",
+        AgentState = "online",
+        StreamHostState = "unavailable",
         ScanState = "idle",
         ConnectedGuestName = "Windows Gaming VM",
         Warnings =
         [
             "Windows guest agent scaffold is using sample launcher data.",
-            "Real Steam and Ubisoft Connect scanners are not implemented yet."
+            "Real Steam and Ubisoft Connect scanners are not implemented yet.",
+            "Sunshine readiness is simulated through delayed launch lifecycle events."
         ]
     };
 
@@ -152,48 +155,54 @@ internal sealed class GuestAgentState
 
     public GuestAgentLaunchResponse? Launch(string gameId)
     {
-        var game = games.FirstOrDefault(candidate => candidate.Id == gameId);
+        GameRecord? game;
+
+        lock (sync)
+        {
+            game = games.FirstOrDefault(candidate => candidate.Id == gameId);
+        }
 
         if (game is null)
         {
             return null;
         }
 
+        var sessionId = Guid.NewGuid().ToString();
         var session = new GameSession
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = sessionId,
             GameId = gameId,
-            RuntimeState = "running",
-            GuestState = "ready",
-            StreamState = "ready",
+            RuntimeState = "queued",
+            GuestState = "online",
+            StreamState = "preparing",
             StartedAt = UtcNow()
         };
 
-        sessions.Insert(0, session);
-        status.ActiveSessionId = session.Id;
-        status.StreamHostState = "ready";
+        lock (sync)
+        {
+            sessions.Insert(0, session);
+            status.ActiveSessionId = session.Id;
+            status.AgentState = "online";
+            status.StreamHostState = "preparing";
+        }
 
         Publish(new SessionEvent
         {
             Id = Guid.NewGuid().ToString(),
-            Type = "session.launch.started",
+            Type = "session.launch.requested",
             Level = "info",
             CreatedAt = UtcNow(),
-            Message = $"Launch accepted for {game.Title}.",
+            Message = $"Launch queued for {game.Title}.",
             GameId = game.Id,
             SessionId = session.Id
         });
 
-        Publish(new SessionEvent
+        var cancellationTokenSource = new CancellationTokenSource();
+        lock (sync)
         {
-            Id = Guid.NewGuid().ToString(),
-            Type = "session.streaming.ready",
-            Level = "info",
-            CreatedAt = UtcNow(),
-            Message = "Guest stream path is ready.",
-            GameId = game.Id,
-            SessionId = session.Id
-        });
+            launchLifecycles[session.Id] = cancellationTokenSource;
+        }
+        _ = RunLaunchLifecycleAsync(CloneGame(game), session.Id, cancellationTokenSource.Token);
 
         return new GuestAgentLaunchResponse
         {
@@ -203,20 +212,41 @@ internal sealed class GuestAgentState
 
     public GameSession? Terminate(string sessionId)
     {
-        var session = sessions.FirstOrDefault(candidate => candidate.Id == sessionId);
+        GameSession? session;
+        CancellationTokenSource? lifecycle;
+
+        lock (sync)
+        {
+            session = sessions.FirstOrDefault(candidate => candidate.Id == sessionId);
+            if (launchLifecycles.Remove(sessionId, out var existingLifecycle))
+            {
+                lifecycle = existingLifecycle;
+            }
+            else
+            {
+                lifecycle = null;
+            }
+        }
 
         if (session is null)
         {
             return null;
         }
 
-        session.RuntimeState = "terminated";
-        session.StreamState = "unavailable";
-        session.EndedAt = UtcNow();
+        lifecycle?.Cancel();
 
-        if (status.ActiveSessionId == session.Id)
+        lock (sync)
         {
-            status.ActiveSessionId = null;
+            session.RuntimeState = "terminated";
+            session.StreamState = "unavailable";
+            session.EndedAt = UtcNow();
+            session.GuestState = "ready";
+
+            if (status.ActiveSessionId == session.Id)
+            {
+                status.ActiveSessionId = null;
+                status.StreamHostState = "unavailable";
+            }
         }
 
         Publish(new SessionEvent
@@ -257,20 +287,158 @@ internal sealed class GuestAgentState
         }
     }
 
+    private async Task RunLaunchLifecycleAsync(
+        GameRecord game,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+
+            var startedSession = UpdateSession(
+                sessionId,
+                session =>
+                {
+                    session.RuntimeState = "launching";
+                    session.GuestState = "online";
+                    session.StreamState = "preparing";
+                },
+                statusUpdate =>
+                {
+                    statusUpdate.AgentState = "online";
+                    statusUpdate.StreamHostState = "preparing";
+                });
+
+            if (startedSession is null)
+            {
+                return;
+            }
+
+            Publish(new SessionEvent
+            {
+                Id = Guid.NewGuid().ToString(),
+                Type = "session.launch.started",
+                Level = "info",
+                CreatedAt = UtcNow(),
+                Message = $"Launch accepted for {game.Title}.",
+                GameId = game.Id,
+                SessionId = sessionId
+            });
+
+            await Task.Delay(TimeSpan.FromMilliseconds(350), cancellationToken);
+
+            var runningSession = UpdateSession(
+                sessionId,
+                session =>
+                {
+                    session.RuntimeState = "running";
+                    session.GuestState = "ready";
+                },
+                statusUpdate =>
+                {
+                    statusUpdate.AgentState = "ready";
+                });
+
+            if (runningSession is null)
+            {
+                return;
+            }
+
+            Publish(new SessionEvent
+            {
+                Id = Guid.NewGuid().ToString(),
+                Type = "session.game.detected",
+                Level = "info",
+                CreatedAt = UtcNow(),
+                Message = $"{game.Title} process was detected in the guest.",
+                GameId = game.Id,
+                SessionId = sessionId
+            });
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
+
+            var readySession = UpdateSession(
+                sessionId,
+                session =>
+                {
+                    session.StreamState = "ready";
+                },
+                statusUpdate =>
+                {
+                    statusUpdate.StreamHostState = "ready";
+                });
+
+            if (readySession is null)
+            {
+                return;
+            }
+
+            Publish(new SessionEvent
+            {
+                Id = Guid.NewGuid().ToString(),
+                Type = "session.streaming.ready",
+                Level = "info",
+                CreatedAt = UtcNow(),
+                Message = "Guest stream path is ready.",
+                GameId = game.Id,
+                SessionId = sessionId
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            lock (sync)
+            {
+                if (launchLifecycles.Remove(sessionId, out var lifecycle))
+                {
+                    lifecycle.Dispose();
+                }
+            }
+        }
+    }
+
+    private GameSession? UpdateSession(
+        string sessionId,
+        Action<GameSession> sessionUpdate,
+        Action<GuestStatusSnapshot>? statusUpdate = null)
+    {
+        lock (sync)
+        {
+            var session = sessions.FirstOrDefault(candidate => candidate.Id == sessionId);
+
+            if (session is null)
+            {
+                return null;
+            }
+
+            sessionUpdate(session);
+            statusUpdate?.Invoke(status);
+            return CloneSession(session);
+        }
+    }
+
     private void Publish(SessionEvent sessionEvent)
     {
-        status.LastEventAt = sessionEvent.CreatedAt;
+        GuestAgentEventEnvelope envelope;
 
-        var envelope = new GuestAgentEventEnvelope
+        lock (sync)
         {
-            Event = sessionEvent,
-            Status = CloneStatus()
-        };
+            status.LastEventAt = sessionEvent.CreatedAt;
 
-        recentEvents.Add(envelope);
-        if (recentEvents.Count > 40)
-        {
-            recentEvents.RemoveAt(0);
+            envelope = new GuestAgentEventEnvelope
+            {
+                Event = sessionEvent,
+                Status = CloneStatus()
+            };
+
+            recentEvents.Add(envelope);
+            if (recentEvents.Count > 40)
+            {
+                recentEvents.RemoveAt(0);
+            }
         }
 
         foreach (var subscriber in subscribers.Values)

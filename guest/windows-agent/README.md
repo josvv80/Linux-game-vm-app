@@ -13,6 +13,10 @@ Current scaffold behavior:
   - prefers `steam.exe -applaunch <appid>` when Steam can be resolved
   - falls back to `steam://run/<appid>` when only the Steam protocol path is available
   - fails fast with `session.failed` if the Steam handoff itself errors
+- attempts lightweight real process observation for discovered Steam titles after handoff:
+  - derives candidate `.exe` names from the discovered install root
+  - uses observed Windows process names when available for `session.game.detected`
+  - falls back to the existing simulated detect step when no candidate process is observed in time
 - streams event envelopes over Server-Sent Events from `GET /events`
 - simulates a staged launch lifecycle:
   - launch queued
@@ -28,7 +32,7 @@ Current scaffold behavior:
 What it does not do yet:
 
 - run as a Windows service
-- watch real game processes after the Steam handoff
+- guarantee accurate per-title process detection for every Steam game shape
 - inspect Sunshine readiness from the Windows guest
 - scan real Ubisoft Connect installs
 

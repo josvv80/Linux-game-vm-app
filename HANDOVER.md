@@ -350,3 +350,12 @@ The current working assumption is:
 - Verified after the launch-path diagnostics UI update:
   - `npm run build` passed
   - `npm test` passed
+- Extended the guest Steam path with lightweight real process observation:
+  - added `guest/windows-agent/GameProcessWatcher.cs`
+  - Steam scan now derives candidate process names from discovered install roots
+  - after a successful Steam handoff, the guest now tries to observe a matching Windows process before falling back to the simulated detect step
+  - when a candidate process is observed, `session.game.detected` now reflects the observed process name instead of only a generic simulated message
+  - observed process metadata is now recorded as `lastObservedProcessName` and `lastObservedProcessPath` on the discovered game when available
+- Updated `guest/windows-agent/README.md` and `guest/windows-agent/CONTRACT.md` to document the new process-observation behavior and its fallback semantics.
+- Verified after the guest Steam process-observation update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed

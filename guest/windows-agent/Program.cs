@@ -314,6 +314,7 @@ internal sealed class GuestAgentState
         _ = RunLaunchLifecycleAsync(
             CloneGame(game),
             session.Id,
+            launchAttempt,
             CloneSimulationSettings(GetOrCreateSimulationSettings(game.Id, game.Title)),
             cancellationTokenSource.Token);
 
@@ -403,6 +404,7 @@ internal sealed class GuestAgentState
     private async Task RunLaunchLifecycleAsync(
         GameRecord game,
         string sessionId,
+        SteamLaunchAttempt launchAttempt,
         GuestAgentSimulationSettings simulation,
         CancellationToken cancellationToken)
     {
@@ -435,12 +437,27 @@ internal sealed class GuestAgentState
                 Type = "session.launch.started",
                 Level = "info",
                 CreatedAt = UtcNow(),
-                Message = $"Launch accepted for {game.Title}.",
+                Message = launchAttempt.Started
+                    ? launchAttempt.Detail
+                    : $"Launch accepted for {game.Title}.",
                 GameId = game.Id,
                 SessionId = sessionId
             });
 
-            await Task.Delay(TimeSpan.FromMilliseconds(simulation.GameDetectedDelayMs), cancellationToken);
+            ObservedGameProcess? observedProcess = null;
+
+            if (launchAttempt.Started)
+            {
+                observedProcess = await GameProcessWatcher.WaitForGameProcessAsync(
+                    game,
+                    TimeSpan.FromMilliseconds(Math.Max(simulation.GameDetectedDelayMs, 1200)),
+                    cancellationToken);
+            }
+
+            if (observedProcess is null)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(simulation.GameDetectedDelayMs), cancellationToken);
+            }
 
             var runningSession = UpdateSession(
                 sessionId,
@@ -465,10 +482,24 @@ internal sealed class GuestAgentState
                 Type = "session.game.detected",
                 Level = "info",
                 CreatedAt = UtcNow(),
-                Message = $"{game.Title} process was detected in the guest.",
+                Message = observedProcess is null
+                    ? $"{game.Title} process was detected in the guest."
+                    : $"{game.Title} process was observed as {observedProcess.ProcessName}.",
                 GameId = game.Id,
                 SessionId = sessionId
             });
+
+            if (observedProcess is not null)
+            {
+                UpdateGameMetadata(game.Id, metadata =>
+                {
+                    metadata["lastObservedProcessName"] = observedProcess.ProcessName;
+                    if (!string.IsNullOrWhiteSpace(observedProcess.ProcessPath))
+                    {
+                        metadata["lastObservedProcessPath"] = observedProcess.ProcessPath;
+                    }
+                });
+            }
 
             await Task.Delay(TimeSpan.FromMilliseconds(simulation.StreamReadyDelayMs), cancellationToken);
 
@@ -573,6 +604,21 @@ internal sealed class GuestAgentState
             sessionUpdate(session);
             statusUpdate?.Invoke(status);
             return CloneSession(session);
+        }
+    }
+
+    private void UpdateGameMetadata(string gameId, Action<Dictionary<string, string>> update)
+    {
+        lock (sync)
+        {
+            var game = games.FirstOrDefault(candidate => candidate.Id == gameId);
+
+            if (game is null)
+            {
+                return;
+            }
+
+            update(game.GuestMetadata);
         }
     }
 

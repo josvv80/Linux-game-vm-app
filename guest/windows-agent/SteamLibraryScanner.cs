@@ -133,7 +133,93 @@ internal static partial class SteamLibraryScanner
             }
         };
 
+        var candidateProcessNames = GetCandidateProcessNames(installRoot);
+
+        if (candidateProcessNames.Count > 0)
+        {
+            game.GuestMetadata["candidateProcessNames"] = string.Join(";", candidateProcessNames);
+        }
+
         return true;
+    }
+
+    private static List<string> GetCandidateProcessNames(string installRoot)
+    {
+        if (!Directory.Exists(installRoot))
+        {
+            return [];
+        }
+
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pendingDirectories = new Queue<(string path, int depth)>();
+        pendingDirectories.Enqueue((installRoot, 0));
+
+        while (pendingDirectories.Count > 0 && candidates.Count < 12)
+        {
+            var (path, depth) = pendingDirectories.Dequeue();
+
+            IEnumerable<string> executablePaths;
+
+            try
+            {
+                executablePaths = Directory.EnumerateFiles(path, "*.exe", SearchOption.TopDirectoryOnly);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var executablePath in executablePaths)
+            {
+                var processName = Path.GetFileNameWithoutExtension(executablePath);
+
+                if (string.IsNullOrWhiteSpace(processName) || IsIgnoredExecutable(processName))
+                {
+                    continue;
+                }
+
+                candidates.Add(processName);
+
+                if (candidates.Count >= 12)
+                {
+                    break;
+                }
+            }
+
+            if (depth >= 1)
+            {
+                continue;
+            }
+
+            IEnumerable<string> childDirectories;
+
+            try
+            {
+                childDirectories = Directory.EnumerateDirectories(path);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var childDirectory in childDirectories.Take(8))
+            {
+                pendingDirectories.Enqueue((childDirectory, depth + 1));
+            }
+        }
+
+        return candidates
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool IsIgnoredExecutable(string processName)
+    {
+        var ignored = processName.ToLowerInvariant();
+        return ignored.Contains("unins")
+            || ignored.Contains("setup")
+            || ignored.Contains("crash")
+            || ignored.Contains("report");
     }
 
     private static string? ReadManifestValue(string content, string key)

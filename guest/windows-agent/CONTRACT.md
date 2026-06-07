@@ -13,6 +13,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
   - triggers launcher scanning in the guest
   - returns `GuestAgentGameListResponse`
   - current scaffold attempts real Steam `appmanifest_*.acf` discovery first and falls back to sample Steam data if no Windows Steam library is found
+  - current Steam discovery also derives candidate game-process names from the install root for later launch observation
 - `GET /games`
   - returns `GuestAgentGameListResponse`
 - `GET /simulation`
@@ -40,6 +41,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
   - the guest may return a queued or preparing session first
   - `GET /events` is the source of truth for later launch, process-detected, and stream-ready transitions
 - a launch may still fail immediately if the guest cannot hand off the request to the real launcher process
+- when the guest can observe a matching Windows game process, `session.game.detected` now reflects that observed process instead of only a simulated delay
 - launch failures may also arrive asynchronously through `GET /events` after an initially accepted launch response
 
 ## Current Host Assumptions

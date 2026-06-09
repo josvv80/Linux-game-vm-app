@@ -306,9 +306,18 @@ The current working assumption is:
 - Verified after the saved scenario probe-target normalization update:
   - `npm test` passed
   - `npm run build` passed
+- Hardened managed-VM simulation timing updates at the host API boundary:
+  - `apps/host-api/src/create-app.ts` now normalizes simulation delay fields before forwarding `PUT /api/simulation` to the runtime provider
+  - launch-accepted, game-detected, and stream-ready delays now accept finite non-negative numeric input and are rounded to integer milliseconds
+  - invalid timing values are omitted instead of overwriting existing guest scenario settings
+  - `apps/host-api/src/create-app.test.ts` now verifies rounded timing input and an invalid delay that leaves the existing managed guest scenario value intact
+- Updated `README.md` so the current feature list mentions normalized timing input for stream-probe scenarios.
+- Verified after the saved scenario timing normalization update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is normalized saved scenario probe-target input at the host API boundary
+  - the latest slice is normalized saved scenario timing input at the host API boundary
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

@@ -88,11 +88,13 @@ function normalizePorts(value: unknown): number[] | undefined {
 }
 
 function normalizeTimeoutMs(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  const timeoutMs = typeof value === "number" ? value : Number(value);
+
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
     return undefined;
   }
 
-  return Math.round(value);
+  return Math.round(timeoutMs);
 }
 
 function normalizeProbeStreamBody(body: ProbeStreamBody | undefined): StreamProbeRequest {
@@ -122,6 +124,9 @@ function normalizeSimulationBody(
   };
   const processNames = normalizeProcessNames(body?.streamProbeProcessNames);
   const ports = normalizePorts(body?.streamProbePorts);
+  const launchAcceptedDelayMs = normalizeTimeoutMs(body?.launchAcceptedDelayMs);
+  const gameDetectedDelayMs = normalizeTimeoutMs(body?.gameDetectedDelayMs);
+  const streamReadyDelayMs = normalizeTimeoutMs(body?.streamReadyDelayMs);
 
   if (body?.outcome !== undefined) {
     request.outcome = body.outcome;
@@ -129,14 +134,14 @@ function normalizeSimulationBody(
   if (body?.failureMessage !== undefined) {
     request.failureMessage = body.failureMessage;
   }
-  if (body?.launchAcceptedDelayMs !== undefined) {
-    request.launchAcceptedDelayMs = body.launchAcceptedDelayMs;
+  if (launchAcceptedDelayMs !== undefined) {
+    request.launchAcceptedDelayMs = launchAcceptedDelayMs;
   }
-  if (body?.gameDetectedDelayMs !== undefined) {
-    request.gameDetectedDelayMs = body.gameDetectedDelayMs;
+  if (gameDetectedDelayMs !== undefined) {
+    request.gameDetectedDelayMs = gameDetectedDelayMs;
   }
-  if (body?.streamReadyDelayMs !== undefined) {
-    request.streamReadyDelayMs = body.streamReadyDelayMs;
+  if (streamReadyDelayMs !== undefined) {
+    request.streamReadyDelayMs = streamReadyDelayMs;
   }
   if (processNames !== undefined) {
     request.streamProbeProcessNames = processNames;

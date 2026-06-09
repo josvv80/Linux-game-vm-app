@@ -349,6 +349,14 @@ select {
   background: rgba(180, 38, 38, 0.25);
 }
 
+.config-save-message {
+  margin: -0.25rem 0 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  color: #d8f5df;
+  background: rgba(34, 120, 66, 0.22);
+}
+
 .game-card {
   padding: 1rem;
   border-radius: 18px;

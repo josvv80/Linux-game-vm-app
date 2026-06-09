@@ -381,9 +381,17 @@ The current working assumption is:
 - Verified after consolidating host config normalization:
   - `npm test` passed
   - `npm run build` passed
+- Added dashboard confirmation for normalized config saves:
+  - `apps/host-web/src/App.tsx` now shows a short confirmation after `Save config` using the normalized config returned by `PUT /api/config`
+  - the confirmation includes the active runtime provider, VM name, and guest-agent URL so operators can see what was actually persisted after backend normalization
+  - the confirmation clears when any config field is edited again
+  - `apps/host-web/src/styles.css` now styles the confirmation as a compact success message near the config form
+- Verified after the dashboard config-save confirmation update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is shared host config normalization for reads and writes
+  - the latest slice is dashboard confirmation for normalized config saves
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

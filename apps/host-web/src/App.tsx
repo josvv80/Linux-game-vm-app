@@ -432,6 +432,7 @@ export function App() {
     null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [configSaveMessage, setConfigSaveMessage] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savingPinnedGameId, setSavingPinnedGameId] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics>(defaultDiagnostics);
@@ -775,6 +776,7 @@ export function App() {
     event.preventDefault();
     setSavingConfig(true);
     setErrorMessage(null);
+    setConfigSaveMessage(null);
 
     try {
       const response = await fetch("/api/config", {
@@ -789,7 +791,11 @@ export function App() {
         throw new Error(`Config update failed: ${response.status}`);
       }
 
-      setConfig((await response.json()) as HostConfig);
+      const savedConfig = (await response.json()) as HostConfig;
+      setConfig(savedConfig);
+      setConfigSaveMessage(
+        `Config saved: ${savedConfig.runtimeProvider} using ${savedConfig.managedVm.vmName} at ${savedConfig.managedVm.guestAgentBaseUrl}.`,
+      );
       await refreshDiagnostics(false);
     } catch (error) {
       setErrorMessage((error as Error).message);
@@ -1158,12 +1164,13 @@ export function App() {
               Runtime provider
               <select
                 value={config.runtimeProvider}
-                onChange={(event) =>
+                onChange={(event) => {
+                  setConfigSaveMessage(null);
                   setConfig((current) => ({
                     ...current,
                     runtimeProvider: event.target.value as RuntimeProviderId,
-                  }))
-                }
+                  }));
+                }}
               >
                 <option value="fake">fake</option>
                 <option value="managed-vm">managed-vm</option>
@@ -1173,36 +1180,39 @@ export function App() {
               VM name
               <input
                 value={config.managedVm.vmName}
-                onChange={(event) =>
+                onChange={(event) => {
+                  setConfigSaveMessage(null);
                   setConfig((current) => ({
                     ...current,
                     managedVm: {
                       ...current.managedVm,
                       vmName: event.target.value,
                     },
-                  }))
-                }
+                  }));
+                }}
               />
             </label>
             <label>
               Guest agent URL
               <input
                 value={config.managedVm.guestAgentBaseUrl}
-                onChange={(event) =>
+                onChange={(event) => {
+                  setConfigSaveMessage(null);
                   setConfig((current) => ({
                     ...current,
                     managedVm: {
                       ...current.managedVm,
                       guestAgentBaseUrl: event.target.value,
                     },
-                  }))
-                }
+                  }));
+                }}
               />
             </label>
             <button disabled={savingConfig || busyAction !== null} type="submit">
               Save config
             </button>
           </form>
+          {configSaveMessage ? <p className="config-save-message">{configSaveMessage}</p> : null}
           <div className="warning-list">
             {snapshot.status.warnings.map((warning) => (
               <p key={warning}>{warning}</p>

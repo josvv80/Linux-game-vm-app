@@ -325,9 +325,17 @@ The current working assumption is:
 - Verified after the saved probe-target reset update:
   - `npm test` passed
   - `npm run build` passed
+- Added explicit saved stream-probe target reset controls in the dashboard:
+  - `apps/host-web/src/App.tsx` now exposes `Reset probe targets` from both the selected-game panel and the managed-VM scenario cards
+  - the reset action saves explicit empty process/port target arrays through the existing `/api/simulation` path so providers can restore their defaults
+  - resetting a profile also clears any stale direct probe result displayed for that game
+- Updated `README.md` so the current feature list mentions explicit saved target reset controls.
+- Verified after the dashboard probe-target reset controls update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is explicit saved scenario probe-target reset behavior
+  - the latest slice is dashboard reset controls for saved scenario probe targets
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

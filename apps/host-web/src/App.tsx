@@ -909,6 +909,22 @@ export function App() {
     await saveSimulationProfile(nextProfile);
   }
 
+  async function resetStreamProbeTargets(profile: SimulationGameProfile) {
+    const nextProfile: SimulationGameProfile = {
+      ...profile,
+      streamProbeProcessNames: [],
+      streamProbePorts: [],
+    };
+
+    updateSimulationProfile(profile.gameId, () => nextProfile);
+    setStreamProbeResultsByGameId((current) => {
+      const next = { ...current };
+      delete next[profile.gameId];
+      return next;
+    });
+    await saveSimulationProfile(nextProfile);
+  }
+
   return (
     <main className="shell">
       <section className="hero">
@@ -1464,6 +1480,17 @@ export function App() {
                       : "Add observed targets"}
                   </button>
                 ) : null}
+                {selectedSimulationProfile ? (
+                  <button
+                    disabled={
+                      busyAction !== null ||
+                      savingSimulationGameId === selectedSimulationProfile.gameId
+                    }
+                    onClick={() => void resetStreamProbeTargets(selectedSimulationProfile)}
+                  >
+                    Reset probe targets
+                  </button>
+                ) : null}
                 <button
                   disabled={busyAction !== null || !selectedLaunchCheck?.canLaunch}
                   onClick={() => void launchGame(selectedGame.id)}
@@ -1860,6 +1887,12 @@ export function App() {
                             : "Add observed targets"}
                         </button>
                       ) : null}
+                      <button
+                        disabled={busyAction !== null || savingSimulationGameId === profile.gameId}
+                        onClick={() => void resetStreamProbeTargets(profile)}
+                      >
+                        Reset probe targets
+                      </button>
                     </div>
                   </div>
                   );

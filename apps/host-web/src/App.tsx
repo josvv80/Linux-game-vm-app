@@ -206,6 +206,12 @@ function StreamProbeResultPanel({
   );
 }
 
+function describeStreamProbeTargets(profile: SimulationGameProfile) {
+  return `Probe targets reset to provider defaults: processes ${
+    formatList(profile.streamProbeProcessNames) || "none"
+  }; ports ${formatList(profile.streamProbePorts) || "none"}.`;
+}
+
 function sessionStateLabel(session: GameSession) {
   if (session.runtimeState === "failed" && session.lastError) {
     return "failed";
@@ -435,6 +441,9 @@ export function App() {
   const [probingSimulationGameId, setProbingSimulationGameId] = useState<string | null>(null);
   const [streamProbeResultsByGameId, setStreamProbeResultsByGameId] = useState<
     Record<string, StreamProbeResult>
+  >({});
+  const [streamProbeResetMessagesByGameId, setStreamProbeResetMessagesByGameId] = useState<
+    Record<string, string>
   >({});
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
 
@@ -666,6 +675,9 @@ export function App() {
   const selectedStreamProbeResult = selectedGame
     ? streamProbeResultsByGameId[selectedGame.id]
     : undefined;
+  const selectedStreamProbeResetMessage = selectedGame
+    ? streamProbeResetMessagesByGameId[selectedGame.id]
+    : undefined;
   const selectedStreamProbeTargetsConfigured =
     selectedSimulationProfile && selectedStreamProbeResult
       ? streamProbeTargetsAlreadyConfigured(
@@ -887,9 +899,12 @@ export function App() {
         throw new Error(`Simulation update failed: ${response.status}`);
       }
 
-      setSimulationCatalog((await response.json()) as SimulationCatalog);
+      const nextCatalog = (await response.json()) as SimulationCatalog;
+      setSimulationCatalog(nextCatalog);
+      return nextCatalog;
     } catch (error) {
       setErrorMessage((error as Error).message);
+      return null;
     } finally {
       setSavingSimulationGameId(null);
     }
@@ -898,6 +913,11 @@ export function App() {
   async function probeStreamHost(profile: SimulationGameProfile) {
     setProbingSimulationGameId(profile.gameId);
     setErrorMessage(null);
+    setStreamProbeResetMessagesByGameId((current) => {
+      const next = { ...current };
+      delete next[profile.gameId];
+      return next;
+    });
 
     try {
       const result = await postJson<StreamProbeResult>("/api/runtime/probe-stream-host", {
@@ -938,6 +958,11 @@ export function App() {
     }
 
     updateSimulationProfile(profile.gameId, () => nextProfile);
+    setStreamProbeResetMessagesByGameId((current) => {
+      const next = { ...current };
+      delete next[profile.gameId];
+      return next;
+    });
     await saveSimulationProfile(nextProfile);
   }
 
@@ -954,7 +979,15 @@ export function App() {
       delete next[profile.gameId];
       return next;
     });
-    await saveSimulationProfile(nextProfile);
+    const savedCatalog = await saveSimulationProfile(nextProfile);
+    const savedProfile = savedCatalog?.games.find((game) => game.gameId === profile.gameId);
+
+    if (savedProfile) {
+      setStreamProbeResetMessagesByGameId((current) => ({
+        ...current,
+        [profile.gameId]: describeStreamProbeTargets(savedProfile),
+      }));
+    }
   }
 
   return (
@@ -1445,6 +1478,11 @@ export function App() {
                   }
                 />
               ) : null}
+              {selectedStreamProbeResetMessage ? (
+                <p className="stream-probe-target-state">
+                  {selectedStreamProbeResetMessage}
+                </p>
+              ) : null}
               <div className="chip-row">
                 {selectedGame.compatibilityFlags.map((flag) => (
                   <span key={flag} className="chip">
@@ -1734,6 +1772,8 @@ export function App() {
               <div className="simulation-list">
                 {simulationCatalog.games.map((profile) => {
                   const streamProbeResult = streamProbeResultsByGameId[profile.gameId];
+                  const streamProbeResetMessage =
+                    streamProbeResetMessagesByGameId[profile.gameId];
                   const streamProbeTargetsConfigured = streamProbeResult
                     ? streamProbeTargetsAlreadyConfigured(profile, streamProbeResult)
                     : false;
@@ -1841,6 +1881,11 @@ export function App() {
                         result={streamProbeResult}
                         targetsConfigured={streamProbeTargetsConfigured}
                       />
+                    ) : null}
+                    {streamProbeResetMessage ? (
+                      <p className="stream-probe-target-state">
+                        {streamProbeResetMessage}
+                      </p>
                     ) : null}
                     <label className="simulation-message">
                       Failure message

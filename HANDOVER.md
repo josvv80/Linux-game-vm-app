@@ -346,9 +346,17 @@ The current working assumption is:
 - Verified after the shared stream-probe result rendering update:
   - `npm test` passed
   - `npm run build` passed
+- Added provider-default confirmation after saved probe-target resets:
+  - `apps/host-web/src/App.tsx` now returns the saved simulation catalog from `saveSimulationProfile()` so reset actions can inspect the provider response
+  - after `Reset probe targets`, the selected-game panel and managed-VM scenario cards now show the restored process and port targets returned by `/api/simulation`
+  - reset confirmations are cleared when a new direct probe runs or observed probe targets are applied, so stale reset messages do not compete with fresh probe results
+- Updated `README.md` so the current feature list mentions reset confirmations for saved stream-probe target lists.
+- Verified after the saved probe-target reset confirmation update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is shared dashboard rendering for direct stream-probe results
+  - the latest slice is provider-default confirmation after saved stream-probe target resets
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

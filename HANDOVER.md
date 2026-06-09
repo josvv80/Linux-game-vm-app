@@ -277,9 +277,17 @@ The current working assumption is:
   - `npm test` passed
   - `npm run build` passed
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed with 0 warnings
+- Refined Sunshine probe target application so observed values are added instead of replacing saved fallbacks:
+  - `apps/host-web/src/App.tsx` now merges an observed Sunshine process name into the existing configured process list while avoiding case-insensitive duplicates
+  - observed listener ports are now appended to the existing configured port list while preserving existing fallback ports
+  - both selected-game and managed-VM scenario actions now use `Add observed targets` copy when applying a probe would add coverage
+- Updated `README.md` so the current feature list describes adding observed stream-probe targets instead of replacing profile targets.
+- Verified after the additive probe-target update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest user-facing slice is the Sunshine probe target coverage check in the selected-game and scenario panels
+  - the latest user-facing slice is additive Sunshine probe target application in the selected-game and scenario panels
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

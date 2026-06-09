@@ -123,6 +123,35 @@ function hasObservedStreamProbeTargets(result: StreamProbeResult) {
   return Boolean(result.processName) || result.listeningPorts.length > 0;
 }
 
+function mergeStringTarget(values: string[] | undefined, observed: string) {
+  const existingValues = values ?? [];
+  const observedKey = observed.trim().toLowerCase();
+
+  if (!observedKey) {
+    return existingValues;
+  }
+
+  if (existingValues.some((value) => value.trim().toLowerCase() === observedKey)) {
+    return existingValues;
+  }
+
+  return [...existingValues, observed.trim()];
+}
+
+function mergePortTargets(values: number[] | undefined, observed: number[]) {
+  const merged = [...(values ?? [])];
+  const seen = new Set(merged);
+
+  for (const port of observed) {
+    if (!seen.has(port)) {
+      merged.push(port);
+      seen.add(port);
+    }
+  }
+
+  return merged;
+}
+
 function streamProbeTargetsAlreadyConfigured(
   profile: SimulationGameProfile,
   result: StreamProbeResult,
@@ -863,11 +892,17 @@ export function App() {
     const nextProfile: SimulationGameProfile = { ...profile };
 
     if (result.processName) {
-      nextProfile.streamProbeProcessNames = [result.processName];
+      nextProfile.streamProbeProcessNames = mergeStringTarget(
+        profile.streamProbeProcessNames,
+        result.processName,
+      );
     }
 
     if (result.listeningPorts.length > 0) {
-      nextProfile.streamProbePorts = result.listeningPorts;
+      nextProfile.streamProbePorts = mergePortTargets(
+        profile.streamProbePorts,
+        result.listeningPorts,
+      );
     }
 
     updateSimulationProfile(profile.gameId, () => nextProfile);
@@ -1372,7 +1407,7 @@ export function App() {
                     <p className="stream-probe-target-state">
                       {selectedStreamProbeTargetsConfigured
                         ? "Observed targets are already covered by this profile."
-                        : "Observed targets can be saved to this profile."}
+                        : "Observed targets can be added to this profile."}
                     </p>
                   ) : null}
                 </div>
@@ -1426,7 +1461,7 @@ export function App() {
                   >
                     {selectedStreamProbeTargetsConfigured
                       ? "Targets already saved"
-                      : "Use observed targets"}
+                      : "Add observed targets"}
                   </button>
                 ) : null}
                 <button
@@ -1775,7 +1810,7 @@ export function App() {
                           <p className="stream-probe-target-state">
                             {streamProbeTargetsConfigured
                               ? "Observed targets are already covered by this profile."
-                              : "Observed targets can be saved to this profile."}
+                              : "Observed targets can be added to this profile."}
                           </p>
                         ) : null}
                       </div>
@@ -1822,7 +1857,7 @@ export function App() {
                         >
                           {streamProbeTargetsConfigured
                             ? "Targets already saved"
-                            : "Use observed targets"}
+                            : "Add observed targets"}
                         </button>
                       ) : null}
                     </div>

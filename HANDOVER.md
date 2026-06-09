@@ -364,9 +364,19 @@ The current working assumption is:
 - Verified after the host config normalization update:
   - `npm test` passed
   - `npm run build` passed
+- Hardened persisted host config reads:
+  - `apps/host-api/src/config-store.ts` now normalizes loaded `data/host-config.json` content before the app uses it
+  - invalid persisted runtime providers now fall back to the current base config provider
+  - managed-VM fields are trimmed on read, blank values are ignored, and unsupported stream modes fall back to the default `sunshine-moonlight` mode
+  - persisted pinned game ids are trimmed and deduplicated while invalid entries are dropped
+  - `apps/host-api/src/create-app.test.ts` now verifies app startup against a malformed existing host config file
+- Updated `README.md` so the current feature list mentions normalized host config reads as well as updates.
+- Verified after the persisted host config read normalization update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is normalized host config update input
+  - the latest slice is normalized persisted host config reads
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

@@ -96,7 +96,7 @@ Today the project can already demonstrate:
 
 - a browser dashboard running on Linux
 - persisted host-side configuration
-- normalized host config updates for runtime provider settings, managed guest connection fields, and pinned game ids
+- normalized host config reads and updates for runtime provider settings, managed guest connection fields, and pinned game ids
 - runtime provider selection
 - managed guest health checks and event streaming
 - automatic managed-guest event-stream retry when the guest stays reachable but the control stream drops

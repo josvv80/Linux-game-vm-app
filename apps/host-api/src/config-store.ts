@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { HostConfig, HostConfigPatch } from "@game-vm-hub/shared-types";
+import type { HostConfig, HostConfigPatch, RuntimeProviderId } from "@game-vm-hub/shared-types";
 
 export const defaultHostConfig: HostConfig = {
   runtimeProvider: "fake",
@@ -12,14 +12,97 @@ export const defaultHostConfig: HostConfig = {
   pinnedGameIds: [],
 };
 
-function mergeConfig(base: HostConfig, patch: HostConfigPatch): HostConfig {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeRuntimeProvider(value: unknown): RuntimeProviderId | undefined {
+  return value === "fake" || value === "managed-vm" ? value : undefined;
+}
+
+function normalizeText(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizePinnedGameIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const pinnedGameIds: string[] = [];
+
+  for (const item of value) {
+    const gameId = normalizeText(item);
+
+    if (gameId && !seen.has(gameId)) {
+      pinnedGameIds.push(gameId);
+      seen.add(gameId);
+    }
+  }
+
+  return pinnedGameIds;
+}
+
+function normalizeConfigPatch(rawPatch: unknown): HostConfigPatch {
+  if (!isRecord(rawPatch)) {
+    return {};
+  }
+
+  const patch: HostConfigPatch = {};
+  const runtimeProvider = normalizeRuntimeProvider(rawPatch.runtimeProvider);
+
+  if (runtimeProvider) {
+    patch.runtimeProvider = runtimeProvider;
+  }
+
+  if (isRecord(rawPatch.managedVm)) {
+    const vmName = normalizeText(rawPatch.managedVm.vmName);
+    const guestAgentBaseUrl = normalizeText(rawPatch.managedVm.guestAgentBaseUrl);
+    const streamMode =
+      rawPatch.managedVm.streamMode === "sunshine-moonlight"
+        ? rawPatch.managedVm.streamMode
+        : undefined;
+
+    if (vmName || guestAgentBaseUrl || streamMode) {
+      patch.managedVm = {};
+
+      if (vmName) {
+        patch.managedVm.vmName = vmName;
+      }
+      if (guestAgentBaseUrl) {
+        patch.managedVm.guestAgentBaseUrl = guestAgentBaseUrl;
+      }
+      if (streamMode) {
+        patch.managedVm.streamMode = streamMode;
+      }
+    }
+  }
+
+  const pinnedGameIds = normalizePinnedGameIds(rawPatch.pinnedGameIds);
+
+  if (pinnedGameIds !== undefined) {
+    patch.pinnedGameIds = pinnedGameIds;
+  }
+
+  return patch;
+}
+
+function mergeConfig(base: HostConfig, patch: unknown): HostConfig {
+  const normalizedPatch = normalizeConfigPatch(patch);
+
   return {
-    runtimeProvider: patch.runtimeProvider ?? base.runtimeProvider,
+    runtimeProvider: normalizedPatch.runtimeProvider ?? base.runtimeProvider,
     managedVm: {
       ...base.managedVm,
-      ...patch.managedVm,
+      ...normalizedPatch.managedVm,
     },
-    pinnedGameIds: patch.pinnedGameIds ?? base.pinnedGameIds,
+    pinnedGameIds: normalizedPatch.pinnedGameIds ?? base.pinnedGameIds,
   };
 }
 

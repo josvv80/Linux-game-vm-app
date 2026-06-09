@@ -161,6 +161,42 @@ describe("host API", () => {
     });
   });
 
+  it("normalizes existing host config files when the app starts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        runtimeProvider: "bad-provider",
+        managedVm: {
+          vmName: " ",
+          guestAgentBaseUrl: " http://192.168.1.50:8765 ",
+          streamMode: "unsupported-stream-mode",
+        },
+        pinnedGameIds: [" steam:app-400 ", "", "steam:app-400", 42],
+      }),
+      "utf8",
+    );
+    const app = buildApp(new AppState(new ConfigStore(configPath), defaultHostConfig));
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/config",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      runtimeProvider: "fake",
+      managedVm: {
+        vmName: "win11-gaming",
+        guestAgentBaseUrl: "http://192.168.1.50:8765",
+        streamMode: "sunshine-moonlight",
+      },
+      pinnedGameIds: ["steam:app-400"],
+    });
+  });
+
   it("persists pinned game ids in host config", async () => {
     const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
     const configPath = join(dir, "host-config.json");

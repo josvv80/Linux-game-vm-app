@@ -333,9 +333,16 @@ The current working assumption is:
 - Verified after the dashboard probe-target reset controls update:
   - `npm test` passed
   - `npm run build` passed
+- Surfaced direct stream-probe metadata in the dashboard:
+  - `apps/host-web/src/App.tsx` now shows each direct Sunshine probe result's checked time and probe mode in both the selected-game panel and managed-VM scenario cards
+  - this uses the existing `StreamProbeResult.checkedAt` and `StreamProbeResult.mode` fields already returned by the host API and guest-agent contract
+- Updated `README.md` so the current feature list mentions checked-at/mode detail for direct stream-host probes.
+- Verified after the direct stream-probe metadata UI update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is dashboard reset controls for saved scenario probe targets
+  - the latest slice is dashboard visibility for direct stream-probe checked-at/mode metadata
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

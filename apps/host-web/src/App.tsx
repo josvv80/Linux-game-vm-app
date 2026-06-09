@@ -1408,6 +1408,10 @@ export function App() {
                   <p className={`game-meta-line ${selectedStreamProbeResult.ok ? "selected-game-ready" : "selected-game-warning"}`}>
                     {selectedStreamProbeResult.detail}
                   </p>
+                  <p className="game-meta-line">
+                    Checked {formatTime(selectedStreamProbeResult.checkedAt)} via{" "}
+                    {selectedStreamProbeResult.mode}.
+                  </p>
                   {selectedStreamProbeResult.ok ? (
                     <p className="game-meta-line">
                       Observed{" "}
@@ -1823,6 +1827,10 @@ export function App() {
                       <div className="stream-probe-result">
                         <p className={`game-meta-line ${streamProbeResult.ok ? "selected-game-ready" : "selected-game-warning"}`}>
                           {streamProbeResult.detail}
+                        </p>
+                        <p className="game-meta-line">
+                          Checked {formatTime(streamProbeResult.checkedAt)} via{" "}
+                          {streamProbeResult.mode}.
                         </p>
                         {streamProbeResult.ok ? (
                           <p className="game-meta-line">

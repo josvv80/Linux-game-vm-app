@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import type {
   DashboardMessage,
+  HostConfigPatch,
   SimulationUpdateRequest,
   StreamProbeRequest,
 } from "@game-vm-hub/shared-types";
@@ -116,6 +117,64 @@ function normalizeProbeStreamBody(body: ProbeStreamBody | undefined): StreamProb
   return request;
 }
 
+function normalizePinnedGameIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const pinnedGameIds: string[] = [];
+
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+
+    const gameId = item.trim();
+
+    if (gameId.length > 0 && !seen.has(gameId)) {
+      pinnedGameIds.push(gameId);
+      seen.add(gameId);
+    }
+  }
+
+  return pinnedGameIds;
+}
+
+function normalizeConfigBody(body: UpdateConfigBody | undefined): HostConfigPatch {
+  const patch: HostConfigPatch = {};
+
+  if (body?.runtimeProvider === "fake" || body?.runtimeProvider === "managed-vm") {
+    patch.runtimeProvider = body.runtimeProvider;
+  }
+
+  const vmName =
+    typeof body?.managedVm?.vmName === "string" ? body.managedVm.vmName.trim() : undefined;
+  const guestAgentBaseUrl =
+    typeof body?.managedVm?.guestAgentBaseUrl === "string"
+      ? body.managedVm.guestAgentBaseUrl.trim()
+      : undefined;
+
+  if (vmName || guestAgentBaseUrl) {
+    patch.managedVm = {};
+
+    if (vmName) {
+      patch.managedVm.vmName = vmName;
+    }
+    if (guestAgentBaseUrl) {
+      patch.managedVm.guestAgentBaseUrl = guestAgentBaseUrl;
+    }
+  }
+
+  const pinnedGameIds = normalizePinnedGameIds(body?.pinnedGameIds);
+
+  if (pinnedGameIds !== undefined) {
+    patch.pinnedGameIds = pinnedGameIds;
+  }
+
+  return patch;
+}
+
 function normalizeSimulationBody(
   body: UpdateSimulationBody | undefined,
 ): SimulationUpdateRequest {
@@ -192,7 +251,7 @@ export function buildApp(state: AppState = createAppState()) {
   );
   app.post("/api/runtime/detach-display", async () => state.detachDisplay());
   app.put("/api/config", async (request) =>
-    state.updateConfig(request.body as UpdateConfigBody),
+    state.updateConfig(normalizeConfigBody(request.body as UpdateConfigBody | undefined)),
   );
   app.put("/api/simulation", async (request) =>
     state.updateSimulation(

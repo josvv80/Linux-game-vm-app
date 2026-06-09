@@ -354,9 +354,19 @@ The current working assumption is:
 - Verified after the saved probe-target reset confirmation update:
   - `npm test` passed
   - `npm run build` passed
+- Hardened host config update input:
+  - `apps/host-api/src/create-app.ts` now normalizes `PUT /api/config` patches before writing persisted host config
+  - runtime provider updates are only accepted when they match a supported provider id
+  - managed-VM name and guest-agent URL fields are trimmed, and blank values are omitted so they do not erase existing config
+  - pinned game ids are trimmed, deduplicated while preserving order, and non-string/empty values are dropped
+  - `apps/host-api/src/create-app.test.ts` now verifies trimmed provider config, ignored invalid provider updates, and normalized pinned-game persistence
+- Updated `README.md` so the current feature list mentions normalized host config updates.
+- Verified after the host config normalization update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is provider-default confirmation after saved stream-probe target resets
+  - the latest slice is normalized host config update input
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

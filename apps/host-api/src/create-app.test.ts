@@ -121,8 +121,8 @@ describe("host API", () => {
       payload: {
         runtimeProvider: "managed-vm",
         managedVm: {
-          vmName: "windows-vfio",
-          guestAgentBaseUrl: "http://192.168.1.20:8765",
+          vmName: " windows-vfio ",
+          guestAgentBaseUrl: " http://192.168.1.20:8765 ",
         },
       },
     });
@@ -132,6 +132,27 @@ describe("host API", () => {
 
     const raw = await readFile(configPath, "utf8");
     expect(JSON.parse(raw)).toMatchObject({
+      runtimeProvider: "managed-vm",
+      managedVm: {
+        vmName: "windows-vfio",
+        guestAgentBaseUrl: "http://192.168.1.20:8765",
+      },
+    });
+
+    const ignoredResponse = await app.inject({
+      method: "PUT",
+      url: "/api/config",
+      payload: {
+        runtimeProvider: "unknown-provider",
+        managedVm: {
+          vmName: " ",
+          guestAgentBaseUrl: " ",
+        },
+      },
+    });
+
+    expect(ignoredResponse.statusCode).toBe(200);
+    expect(ignoredResponse.json()).toMatchObject({
       runtimeProvider: "managed-vm",
       managedVm: {
         vmName: "windows-vfio",
@@ -150,7 +171,13 @@ describe("host API", () => {
       method: "PUT",
       url: "/api/config",
       payload: {
-        pinnedGameIds: ["steam:app-400", "ubisoft-connect:anno-1800"],
+        pinnedGameIds: [
+          " steam:app-400 ",
+          "steam:app-400",
+          "",
+          "ubisoft-connect:anno-1800",
+          42,
+        ],
       },
     });
 

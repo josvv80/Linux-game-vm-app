@@ -174,6 +174,38 @@ function streamProbeTargetsAlreadyConfigured(
   return processCovered && portsCovered;
 }
 
+function StreamProbeResultPanel({
+  result,
+  targetsConfigured,
+}: {
+  result: StreamProbeResult;
+  targetsConfigured?: boolean | undefined;
+}) {
+  return (
+    <div className="stream-probe-result">
+      <p className={`game-meta-line ${result.ok ? "selected-game-ready" : "selected-game-warning"}`}>
+        {result.detail}
+      </p>
+      <p className="game-meta-line">
+        Checked {formatTime(result.checkedAt)} via {result.mode}.
+      </p>
+      {result.ok ? (
+        <p className="game-meta-line">
+          Observed {result.processName ? `process ${result.processName}` : "no process name"}{" "}
+          with ports {formatList(result.listeningPorts) || "none"}.
+        </p>
+      ) : null}
+      {targetsConfigured !== undefined && result.ok && hasObservedStreamProbeTargets(result) ? (
+        <p className="stream-probe-target-state">
+          {targetsConfigured
+            ? "Observed targets are already covered by this profile."
+            : "Observed targets can be added to this profile."}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function sessionStateLabel(session: GameSession) {
   if (session.runtimeState === "failed" && session.lastError) {
     return "failed";
@@ -1404,33 +1436,14 @@ export function App() {
                 </div>
               </div>
               {selectedStreamProbeResult ? (
-                <div className="stream-probe-result">
-                  <p className={`game-meta-line ${selectedStreamProbeResult.ok ? "selected-game-ready" : "selected-game-warning"}`}>
-                    {selectedStreamProbeResult.detail}
-                  </p>
-                  <p className="game-meta-line">
-                    Checked {formatTime(selectedStreamProbeResult.checkedAt)} via{" "}
-                    {selectedStreamProbeResult.mode}.
-                  </p>
-                  {selectedStreamProbeResult.ok ? (
-                    <p className="game-meta-line">
-                      Observed{" "}
-                      {selectedStreamProbeResult.processName
-                        ? `process ${selectedStreamProbeResult.processName}`
-                        : "no process name"}{" "}
-                      with ports {formatList(selectedStreamProbeResult.listeningPorts) || "none"}.
-                    </p>
-                  ) : null}
-                  {selectedSimulationProfile &&
-                  selectedStreamProbeResult.ok &&
-                  hasObservedStreamProbeTargets(selectedStreamProbeResult) ? (
-                    <p className="stream-probe-target-state">
-                      {selectedStreamProbeTargetsConfigured
-                        ? "Observed targets are already covered by this profile."
-                        : "Observed targets can be added to this profile."}
-                    </p>
-                  ) : null}
-                </div>
+                <StreamProbeResultPanel
+                  result={selectedStreamProbeResult}
+                  targetsConfigured={
+                    selectedSimulationProfile
+                      ? selectedStreamProbeTargetsConfigured
+                      : undefined
+                  }
+                />
               ) : null}
               <div className="chip-row">
                 {selectedGame.compatibilityFlags.map((flag) => (
@@ -1824,31 +1837,10 @@ export function App() {
                       </label>
                     </div>
                     {streamProbeResult ? (
-                      <div className="stream-probe-result">
-                        <p className={`game-meta-line ${streamProbeResult.ok ? "selected-game-ready" : "selected-game-warning"}`}>
-                          {streamProbeResult.detail}
-                        </p>
-                        <p className="game-meta-line">
-                          Checked {formatTime(streamProbeResult.checkedAt)} via{" "}
-                          {streamProbeResult.mode}.
-                        </p>
-                        {streamProbeResult.ok ? (
-                          <p className="game-meta-line">
-                            Observed{" "}
-                            {streamProbeResult.processName
-                              ? `process ${streamProbeResult.processName}`
-                              : "no process name"}{" "}
-                            with ports {formatList(streamProbeResult.listeningPorts) || "none"}.
-                          </p>
-                        ) : null}
-                        {streamProbeResult.ok && hasObservedStreamProbeTargets(streamProbeResult) ? (
-                          <p className="stream-probe-target-state">
-                            {streamProbeTargetsConfigured
-                              ? "Observed targets are already covered by this profile."
-                              : "Observed targets can be added to this profile."}
-                          </p>
-                        ) : null}
-                      </div>
+                      <StreamProbeResultPanel
+                        result={streamProbeResult}
+                        targetsConfigured={streamProbeTargetsConfigured}
+                      />
                     ) : null}
                     <label className="simulation-message">
                       Failure message

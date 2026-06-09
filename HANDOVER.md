@@ -340,9 +340,15 @@ The current working assumption is:
 - Verified after the direct stream-probe metadata UI update:
   - `npm test` passed
   - `npm run build` passed
+- Consolidated direct stream-probe result rendering in the dashboard:
+  - `apps/host-web/src/App.tsx` now uses a shared `StreamProbeResultPanel` for both selected-game and managed-VM scenario probe results
+  - this keeps checked-at/mode, observed process/port, and target coverage messaging consistent across both dashboard surfaces before adding more probe actions
+- Verified after the shared stream-probe result rendering update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is dashboard visibility for direct stream-probe checked-at/mode metadata
+  - the latest slice is shared dashboard rendering for direct stream-probe results
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

@@ -33,6 +33,10 @@ app.MapPut("/simulation", (GuestAgentSimulationUpdateRequest request, GuestAgent
         ? Results.NotFound(new { message = $"Unknown game id: {request.GameId}" })
         : Results.Ok(response);
 });
+app.MapPost("/stream-probe", async (GuestAgentStreamProbeRequest request, GuestAgentState state, CancellationToken cancellationToken) =>
+{
+    return Results.Ok(await state.ProbeStreamHostAsync(request, cancellationToken));
+});
 
 app.MapPost("/launch", (GuestAgentLaunchRequest request, GuestAgentState state) =>
 {
@@ -204,6 +208,14 @@ internal sealed class GuestAgentState
             current.LaunchAcceptedDelayMs = request.LaunchAcceptedDelayMs ?? current.LaunchAcceptedDelayMs;
             current.GameDetectedDelayMs = request.GameDetectedDelayMs ?? current.GameDetectedDelayMs;
             current.StreamReadyDelayMs = request.StreamReadyDelayMs ?? current.StreamReadyDelayMs;
+            if (request.StreamProbeProcessNames is not null)
+            {
+                current.StreamProbeProcessNames = NormalizeProcessNames(request.StreamProbeProcessNames);
+            }
+            if (request.StreamProbePorts is not null)
+            {
+                current.StreamProbePorts = NormalizePorts(request.StreamProbePorts);
+            }
 
             foreach (var game in games.Where(candidate => candidate.Id == request.GameId))
             {
@@ -218,6 +230,49 @@ internal sealed class GuestAgentState
                     .ToList()
             };
         }
+    }
+
+    public async Task<GuestAgentStreamProbeResponse> ProbeStreamHostAsync(
+        GuestAgentStreamProbeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var processNames = request.ProcessNames is null
+            ? [.. SunshineStreamProbe.DefaultProcessNames]
+            : NormalizeProcessNames(request.ProcessNames);
+        var ports = request.Ports is null
+            ? [.. SunshineStreamProbe.DefaultPorts]
+            : NormalizePorts(request.Ports);
+        var timeoutMs = request.TimeoutMs is > 0 ? request.TimeoutMs.Value : 1200;
+        var observed = await SunshineStreamProbe.WaitForReadyAsync(
+            TimeSpan.FromMilliseconds(timeoutMs),
+            new SunshineProbeOptions
+            {
+                ProcessNames = processNames,
+                Ports = ports
+            },
+            cancellationToken);
+
+        if (observed is null)
+        {
+            return new GuestAgentStreamProbeResponse
+            {
+                Ok = false,
+                Mode = "not-observed",
+                Detail = "Sunshine was not observed with the configured process names and listener ports.",
+                CheckedAt = UtcNow(),
+                ListeningPorts = []
+            };
+        }
+
+        return new GuestAgentStreamProbeResponse
+        {
+            Ok = true,
+            Mode = observed.Mode,
+            Detail = observed.Detail,
+            CheckedAt = UtcNow(),
+            ProcessName = observed.ProcessName,
+            ListeningPorts = [.. observed.ListeningPorts]
+        };
     }
 
     public GuestAgentLaunchResponse? Launch(string gameId)
@@ -501,7 +556,62 @@ internal sealed class GuestAgentState
                 });
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(simulation.StreamReadyDelayMs), cancellationToken);
+            ObservedStreamHost? observedStreamHost = null;
+            var attemptedStreamHostProbe = launchAttempt.Started;
+            var streamReadyDetail = "Guest stream path is ready.";
+
+            if (attemptedStreamHostProbe)
+            {
+                observedStreamHost = await SunshineStreamProbe.WaitForReadyAsync(
+                    TimeSpan.FromMilliseconds(Math.Max(simulation.StreamReadyDelayMs, 1200)),
+                    new SunshineProbeOptions
+                    {
+                        ProcessNames = [.. simulation.StreamProbeProcessNames],
+                        Ports = [.. simulation.StreamProbePorts]
+                    },
+                    cancellationToken);
+            }
+
+            if (observedStreamHost is null && !attemptedStreamHostProbe)
+            {
+                streamReadyDetail = "Stream readiness came from the scaffolded delayed lifecycle.";
+                await Task.Delay(TimeSpan.FromMilliseconds(simulation.StreamReadyDelayMs), cancellationToken);
+                UpdateGameMetadata(game.Id, metadata =>
+                {
+                    metadata["lastStreamReadyMode"] = "simulated-delay";
+                    metadata["lastStreamReadyDetail"] = streamReadyDetail;
+                    metadata.Remove("lastStreamHostProcessName");
+                    metadata.Remove("lastStreamHostPorts");
+                });
+            }
+            else if (observedStreamHost is not null)
+            {
+                streamReadyDetail = observedStreamHost.Detail;
+                UpdateGameMetadata(game.Id, metadata =>
+                {
+                    metadata["lastStreamReadyMode"] = observedStreamHost.Mode;
+                    metadata["lastStreamReadyDetail"] = observedStreamHost.Detail;
+                    if (!string.IsNullOrWhiteSpace(observedStreamHost.ProcessName))
+                    {
+                        metadata["lastStreamHostProcessName"] = observedStreamHost.ProcessName;
+                    }
+                    if (observedStreamHost.ListeningPorts.Count > 0)
+                    {
+                        metadata["lastStreamHostPorts"] = string.Join(";", observedStreamHost.ListeningPorts);
+                    }
+                });
+            }
+            else
+            {
+                streamReadyDetail = "Sunshine was not observed before the readiness timeout; the scaffold reported stream readiness.";
+                UpdateGameMetadata(game.Id, metadata =>
+                {
+                    metadata["lastStreamReadyMode"] = "sunshine-probe-timeout-fallback";
+                    metadata["lastStreamReadyDetail"] = streamReadyDetail;
+                    metadata.Remove("lastStreamHostProcessName");
+                    metadata.Remove("lastStreamHostPorts");
+                });
+            }
 
             if (ShouldFailBeforeStreamReady(simulation))
             {
@@ -567,7 +677,7 @@ internal sealed class GuestAgentState
                 Type = "session.streaming.ready",
                 Level = "info",
                 CreatedAt = UtcNow(),
-                Message = "Guest stream path is ready.",
+                Message = streamReadyDetail,
                 GameId = game.Id,
                 SessionId = sessionId
             });
@@ -668,7 +778,9 @@ internal sealed class GuestAgentState
                 FailureMessage = "Simulated launch failure for PUBG: BATTLEGROUNDS.",
                 LaunchAcceptedDelayMs = 250,
                 GameDetectedDelayMs = 350,
-                StreamReadyDelayMs = 500
+                StreamReadyDelayMs = 500,
+                StreamProbeProcessNames = [.. SunshineStreamProbe.DefaultProcessNames],
+                StreamProbePorts = [.. SunshineStreamProbe.DefaultPorts]
             },
             new GuestAgentSimulationSettings
             {
@@ -677,7 +789,9 @@ internal sealed class GuestAgentState
                 FailureMessage = "Sunshine stream handshake timed out before the game session became remotely playable.",
                 LaunchAcceptedDelayMs = 250,
                 GameDetectedDelayMs = 350,
-                StreamReadyDelayMs = 500
+                StreamReadyDelayMs = 500,
+                StreamProbeProcessNames = [.. SunshineStreamProbe.DefaultProcessNames],
+                StreamProbePorts = [.. SunshineStreamProbe.DefaultPorts]
             }
         ];
     }
@@ -712,6 +826,8 @@ internal sealed class GuestAgentState
         game.GuestMetadata["launchAcceptedDelayMs"] = profile.LaunchAcceptedDelayMs.ToString();
         game.GuestMetadata["gameDetectedDelayMs"] = profile.GameDetectedDelayMs.ToString();
         game.GuestMetadata["streamReadyDelayMs"] = profile.StreamReadyDelayMs.ToString();
+        game.GuestMetadata["streamProbeProcessNames"] = string.Join(";", profile.StreamProbeProcessNames);
+        game.GuestMetadata["streamProbePorts"] = string.Join(";", profile.StreamProbePorts);
     }
 
     private static GuestAgentSimulationSettings CloneSimulationSettings(GuestAgentSimulationSettings profile)
@@ -723,7 +839,9 @@ internal sealed class GuestAgentState
             FailureMessage = profile.FailureMessage,
             LaunchAcceptedDelayMs = profile.LaunchAcceptedDelayMs,
             GameDetectedDelayMs = profile.GameDetectedDelayMs,
-            StreamReadyDelayMs = profile.StreamReadyDelayMs
+            StreamReadyDelayMs = profile.StreamReadyDelayMs,
+            StreamProbeProcessNames = [.. profile.StreamProbeProcessNames],
+            StreamProbePorts = [.. profile.StreamProbePorts]
         };
     }
 
@@ -833,7 +951,7 @@ internal sealed class GuestAgentState
         }
 
         warnings.Add("Ubisoft Connect discovery is not implemented yet; sample Ubisoft data remains in the scaffold.");
-        warnings.Add("Sunshine readiness is simulated through delayed launch lifecycle events.");
+        warnings.Add("Sunshine readiness is observed from the Windows guest when possible; delayed simulation remains the scaffold fallback.");
 
         return warnings;
     }
@@ -899,7 +1017,9 @@ internal sealed class GuestAgentState
                 FailureMessage = "Sunshine stream handshake timed out before the game session became remotely playable.",
                 LaunchAcceptedDelayMs = 250,
                 GameDetectedDelayMs = 350,
-                StreamReadyDelayMs = 500
+                StreamReadyDelayMs = 500,
+                StreamProbeProcessNames = [.. SunshineStreamProbe.DefaultProcessNames],
+                StreamProbePorts = [.. SunshineStreamProbe.DefaultPorts]
             };
         }
 
@@ -910,8 +1030,32 @@ internal sealed class GuestAgentState
             FailureMessage = $"Simulated launch failure for {gameTitle}.",
             LaunchAcceptedDelayMs = 250,
             GameDetectedDelayMs = 350,
-            StreamReadyDelayMs = 500
+            StreamReadyDelayMs = 500,
+            StreamProbeProcessNames = [.. SunshineStreamProbe.DefaultProcessNames],
+            StreamProbePorts = [.. SunshineStreamProbe.DefaultPorts]
         };
+    }
+
+    private static List<string> NormalizeProcessNames(IEnumerable<string> processNames)
+    {
+        var normalized = processNames
+            .Select(processName => processName.Trim())
+            .Where(processName => !string.IsNullOrWhiteSpace(processName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return normalized.Count > 0 ? normalized : [.. SunshineStreamProbe.DefaultProcessNames];
+    }
+
+    private static List<int> NormalizePorts(IEnumerable<int> ports)
+    {
+        var normalized = ports
+            .Where(port => port is > 0 and <= 65535)
+            .Distinct()
+            .OrderBy(port => port)
+            .ToList();
+
+        return normalized.Count > 0 ? normalized : [.. SunshineStreamProbe.DefaultPorts];
     }
 
     private static string UtcNow() => DateTimeOffset.UtcNow.ToString("O");
@@ -956,6 +1100,25 @@ internal sealed class GuestAgentSimulationUpdateRequest
     public int? LaunchAcceptedDelayMs { get; set; }
     public int? GameDetectedDelayMs { get; set; }
     public int? StreamReadyDelayMs { get; set; }
+    public List<string>? StreamProbeProcessNames { get; set; }
+    public List<int>? StreamProbePorts { get; set; }
+}
+
+internal sealed class GuestAgentStreamProbeRequest
+{
+    public List<string>? ProcessNames { get; set; }
+    public List<int>? Ports { get; set; }
+    public int? TimeoutMs { get; set; }
+}
+
+internal sealed class GuestAgentStreamProbeResponse
+{
+    public bool Ok { get; set; }
+    public string Mode { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public string CheckedAt { get; set; } = "";
+    public string? ProcessName { get; set; }
+    public List<int> ListeningPorts { get; set; } = [];
 }
 
 internal sealed class GuestAgentSimulationSettings
@@ -966,6 +1129,8 @@ internal sealed class GuestAgentSimulationSettings
     public int LaunchAcceptedDelayMs { get; set; } = 250;
     public int GameDetectedDelayMs { get; set; } = 350;
     public int StreamReadyDelayMs { get; set; } = 500;
+    public List<string> StreamProbeProcessNames { get; set; } = [.. SunshineStreamProbe.DefaultProcessNames];
+    public List<int> StreamProbePorts { get; set; } = [.. SunshineStreamProbe.DefaultPorts];
 }
 
 internal sealed class GuestAgentLaunchRequest

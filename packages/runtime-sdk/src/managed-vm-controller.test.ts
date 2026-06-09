@@ -57,6 +57,10 @@ async function flushAsyncWork() {
   await Promise.resolve();
 }
 
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const config: HostConfig = {
   runtimeProvider: "managed-vm",
   managedVm: {
@@ -64,6 +68,7 @@ const config: HostConfig = {
     guestAgentBaseUrl: "http://127.0.0.1:8765",
     streamMode: "sunshine-moonlight",
   },
+  pinnedGameIds: [],
 };
 
 describe("ManagedVmController", () => {
@@ -303,17 +308,33 @@ describe("ManagedVmController", () => {
       outcome: "fail-before-stream-ready",
       failureMessage: "Portal failed before remote play became ready.",
       streamReadyDelayMs: 900,
+      streamProbeProcessNames: ["sunshine", "sunshine-service"],
+      streamProbePorts: [47984, 48010],
     });
     expect(updatedProfiles.games[0]).toMatchObject({
       gameId: "steam:app-400",
       outcome: "fail-before-stream-ready",
       failureMessage: "Portal failed before remote play became ready.",
       streamReadyDelayMs: 900,
+      streamProbeProcessNames: ["sunshine", "sunshine-service"],
+      streamProbePorts: [47984, 48010],
     });
 
     const launch = await controller.guestConnection.launchGame("steam:app-400");
     await flushAsyncWork();
     expect(launch.session.id).toBe("session-1");
+
+    const attachResult = await controller.runtimeProvider.attachDisplay();
+    expect(attachResult).toMatchObject({
+      ok: true,
+      detail: "Remote play path is ready. Attach Moonlight or another client to begin play.",
+    });
+
+    const detachResult = await controller.runtimeProvider.detachDisplay();
+    expect(detachResult).toMatchObject({
+      ok: true,
+      detail: "Remote client detached. The stream path stays ready for another attachment.",
+    });
 
     const terminated = await controller.guestConnection.terminateSession("session-1");
     await flushAsyncWork();
@@ -324,6 +345,8 @@ describe("ManagedVmController", () => {
     expect(snapshot.sessions[0]?.runtimeState).toBe("terminated");
     expect(snapshot.events.map((event) => event.type)).toEqual([
       "session.ended",
+      "display.detached",
+      "display.attached",
       "session.streaming.ready",
       "session.launch.started",
       "guest.scan.completed",
@@ -344,6 +367,8 @@ describe("ManagedVmController", () => {
           outcome: "fail-before-stream-ready",
           failureMessage: "Portal failed before remote play became ready.",
           streamReadyDelayMs: 900,
+          streamProbeProcessNames: ["sunshine", "sunshine-service"],
+          streamProbePorts: [47984, 48010],
         }),
       },
       { path: "/launch", method: "POST", body: JSON.stringify({ gameId: "steam:app-400" }) },
@@ -353,8 +378,12 @@ describe("ManagedVmController", () => {
     expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
       guestAgentReachable: true,
       eventStreamConnected: true,
-      remotePlayReady: true,
+      remotePlayReady: false,
+      remoteClientAttached: false,
+      activeSessionRunning: false,
+      activeSessionStreamReady: false,
       connectedGuestName: "Windows Gaming VM",
+      lastDisplayAttachDetail: "Remote display handoff cleared because the guest session ended.",
       sessionCount: 1,
     });
   });
@@ -400,6 +429,8 @@ describe("ManagedVmController", () => {
     expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
       guestAgentReachable: true,
       eventStreamConnected: false,
+      eventStreamState: "reconnecting",
+      eventStreamReconnectAttempts: 1,
       remotePlayReady: false,
       connectedGuestName: "Windows Gaming VM",
       sessionCount: 0,
@@ -407,6 +438,117 @@ describe("ManagedVmController", () => {
     expect((await controller.runtimeProvider.getDiagnostics()).lastEventStreamError).toContain(
       "stream not available",
     );
+  });
+
+  it("does not attach a remote client before the stream path is ready", async () => {
+    const stream = createEventStream();
+    streams.push(stream);
+
+    const controller = new ManagedVmController(config, {
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input)
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+
+        if (url.pathname === "/health") {
+          return jsonResponse({
+            guestName: "Windows Gaming VM",
+            agentVersion: "0.1.0",
+            status: {
+              guestPowerState: "running",
+              agentState: "ready",
+              streamHostState: "preparing",
+              scanState: "idle",
+              warnings: [],
+              connectedGuestName: "Windows Gaming VM",
+            },
+          } satisfies GuestAgentHealthResponse);
+        }
+
+        if (url.pathname === "/events") {
+          return stream.response;
+        }
+
+        return jsonResponse({ message: "Not found" }, 404);
+      },
+    });
+
+    await controller.runtimeProvider.startGuest();
+
+    const attachResult = await controller.runtimeProvider.attachDisplay();
+    const diagnostics = await controller.runtimeProvider.getDiagnostics();
+
+    expect(attachResult).toMatchObject({
+      ok: false,
+      detail: "No stream-ready active session is available for remote display attachment.",
+    });
+    expect(diagnostics).toMatchObject({
+      remotePlayReady: false,
+      remoteClientAttached: false,
+      activeSessionRunning: false,
+      activeSessionStreamReady: false,
+      lastDisplayAttachDetail:
+        "No stream-ready active session is available for remote display attachment.",
+    });
+    expect(controller.snapshot().events[0]?.type).toBe("display.attach.failed");
+  });
+
+  it("does not detach a remote client when nothing is attached", async () => {
+    const stream = createEventStream();
+    streams.push(stream);
+
+    const controller = new ManagedVmController(config, {
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input)
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+
+        if (url.pathname === "/health") {
+          return jsonResponse({
+            guestName: "Windows Gaming VM",
+            agentVersion: "0.1.0",
+            status: {
+              guestPowerState: "running",
+              agentState: "ready",
+              streamHostState: "ready",
+              scanState: "idle",
+              warnings: [],
+              connectedGuestName: "Windows Gaming VM",
+            },
+          } satisfies GuestAgentHealthResponse);
+        }
+
+        if (url.pathname === "/events") {
+          return stream.response;
+        }
+
+        return jsonResponse({ message: "Not found" }, 404);
+      },
+    });
+
+    await controller.runtimeProvider.startGuest();
+
+    const detachResult = await controller.runtimeProvider.detachDisplay();
+    const diagnostics = await controller.runtimeProvider.getDiagnostics();
+
+    expect(detachResult).toMatchObject({
+      ok: false,
+      detail: "No remote client is currently attached.",
+    });
+    expect(diagnostics).toMatchObject({
+      remotePlayReady: false,
+      remoteClientAttached: false,
+      activeSessionRunning: false,
+      activeSessionStreamReady: false,
+      lastDisplayAttachDetail: "No remote client is currently attached.",
+    });
+    expect(controller.snapshot().events[0]?.type).toBe("display.detach.failed");
   });
 
   it("reconnects the guest event stream through prepare when the guest stays reachable", async () => {
@@ -454,6 +596,8 @@ describe("ManagedVmController", () => {
     expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
       guestAgentReachable: true,
       eventStreamConnected: false,
+      eventStreamState: "reconnecting",
+      eventStreamReconnectAttempts: 1,
     });
 
     streamAvailable = true;
@@ -464,8 +608,181 @@ describe("ManagedVmController", () => {
     expect(await controller.runtimeProvider.getDiagnostics()).toMatchObject({
       guestAgentReachable: true,
       eventStreamConnected: true,
+      eventStreamState: "connected",
+      eventStreamReconnectAttempts: 0,
       connectedGuestName: "Windows Gaming VM",
     });
+  });
+
+  it("automatically reconnects the guest event stream after an unexpected disconnect", async () => {
+    const firstStream = createEventStream();
+    const secondStream = createEventStream();
+    streams.push(firstStream, secondStream);
+    let eventStreamRequestCount = 0;
+
+    const controller = new ManagedVmController(
+      config,
+      {
+        eventStreamReconnectDelayMs: 5,
+        fetchImpl: async (input) => {
+          const url =
+            typeof input === "string"
+              ? new URL(input)
+              : input instanceof URL
+                ? input
+                : new URL(input.url);
+
+          if (url.pathname === "/health") {
+            return jsonResponse({
+              guestName: "Windows Gaming VM",
+              agentVersion: "0.1.0",
+              status: {
+                guestPowerState: "running",
+                agentState: "ready",
+                streamHostState: "preparing",
+                scanState: "idle",
+                warnings: [],
+                connectedGuestName: "Windows Gaming VM",
+              },
+            } satisfies GuestAgentHealthResponse);
+          }
+
+          if (url.pathname === "/events") {
+            eventStreamRequestCount += 1;
+            return eventStreamRequestCount === 1 ? firstStream.response : secondStream.response;
+          }
+
+          return jsonResponse({ message: "Not found" }, 404);
+        },
+      },
+    );
+
+    await controller.runtimeProvider.startGuest();
+
+    firstStream.close();
+    await sleep(60);
+
+    const diagnostics = await controller.runtimeProvider.getDiagnostics();
+    expect(diagnostics).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: true,
+      eventStreamState: "connected",
+      eventStreamReconnectAttempts: 0,
+      connectedGuestName: "Windows Gaming VM",
+    });
+    expect(eventStreamRequestCount).toBeGreaterThanOrEqual(2);
+
+    secondStream.emit({
+      event: {
+        id: "event-after-reconnect",
+        type: "guest.scan.started",
+        level: "info",
+        createdAt: "2026-06-08T12:00:00.000Z",
+        message: "Guest launcher scan started after reconnect.",
+      },
+      status: {
+        guestPowerState: "running",
+        agentState: "scanning",
+        streamHostState: "preparing",
+        scanState: "running",
+        warnings: [],
+        connectedGuestName: "Windows Gaming VM",
+      },
+    });
+    await flushAsyncWork();
+
+    expect(controller.snapshot().events[0]).toMatchObject({
+      id: "event-after-reconnect",
+      type: "guest.scan.started",
+      message: "Guest launcher scan started after reconnect.",
+    });
+  });
+
+  it("flags a managed-vm launch as stalled when stream readiness exceeds the expected timing window", async () => {
+    const stream = createEventStream();
+    streams.push(stream);
+
+    const controller = new ManagedVmController(config, {
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input)
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+
+        if (url.pathname === "/health") {
+          return jsonResponse({
+            guestName: "Windows Gaming VM",
+            agentVersion: "0.1.0",
+            status: {
+              guestPowerState: "running",
+              agentState: "ready",
+              streamHostState: "preparing",
+              scanState: "idle",
+              warnings: [],
+              connectedGuestName: "Windows Gaming VM",
+            },
+          } satisfies GuestAgentHealthResponse);
+        }
+
+        if (url.pathname === "/events") {
+          return stream.response;
+        }
+
+        if (url.pathname === "/scan") {
+          return jsonResponse({
+            games: [
+              {
+                id: "steam:app-400",
+                title: "Portal",
+                launcher: "steam",
+                installState: "installed",
+                launchCommandRef: "steam://run/400",
+                lastSeenAt: "2026-06-08T12:00:00.000Z",
+                compatibilityFlags: ["prototype"],
+                guestMetadata: {
+                  launchAcceptedDelayMs: "250",
+                  gameDetectedDelayMs: "350",
+                  streamReadyDelayMs: "500",
+                },
+              },
+            ],
+            scannedAt: "2026-06-08T12:00:01.000Z",
+          } satisfies GuestAgentGameListResponse);
+        }
+
+        if (url.pathname === "/launch") {
+          return jsonResponse({
+            session: {
+              id: "session-stalled",
+              gameId: "steam:app-400",
+              runtimeState: "launching",
+              guestState: "online",
+              streamState: "preparing",
+              startedAt: new Date(Date.now() - 6000).toISOString(),
+            },
+          } satisfies GuestAgentLaunchResponse);
+        }
+
+        return jsonResponse({ message: "Not found" }, 404);
+      },
+    });
+
+    await controller.runtimeProvider.startGuest();
+    await controller.guestConnection.scanGames();
+    await controller.guestConnection.launchGame("steam:app-400");
+
+    const diagnostics = await controller.runtimeProvider.getDiagnostics();
+    expect(diagnostics).toMatchObject({
+      remotePlayReady: false,
+      remotePlayStalled: true,
+      activeSessionRunning: true,
+      activeSessionStreamReady: false,
+      activeSessionExpectedReadyMs: 1100,
+    });
+    expect(diagnostics.activeSessionAgeMs).toBeGreaterThanOrEqual(6000);
+    expect(diagnostics.remotePlayStallDetail).toContain("expected readiness was around 1.1s");
   });
 
   it("updates the tracked session when the guest emits a failed launch lifecycle", async () => {

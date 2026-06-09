@@ -15,6 +15,8 @@ import type {
   SimulationCatalog,
   SimulationGameProfile,
   SimulationUpdateRequest,
+  StreamProbeRequest,
+  StreamProbeResult,
 } from "@game-vm-hub/shared-types";
 
 export interface FakeEnvironmentOptions {
@@ -58,6 +60,15 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+function parseDelay(value?: string): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 type EventListener = (event: SessionEvent, snapshot: DashboardSnapshot) => void;
 
 export class FakeEnvironment {
@@ -67,6 +78,8 @@ export class FakeEnvironment {
   private games: GameRecord[] = [];
   private sessions: GameSession[] = [];
   private events: SessionEvent[] = [];
+  private remoteClientAttached = false;
+  private lastDisplayAttachDetail: string | null = null;
   private status: GuestStatusSnapshot = {
     guestPowerState: "offline",
     agentState: "offline",
@@ -91,6 +104,7 @@ export class FakeEnvironment {
       startGuest: async () => this.startGuest(),
       stopGuest: async (force) => this.stopGuest(force),
       attachDisplay: async () => this.attachDisplay(),
+      detachDisplay: async () => this.detachDisplay(),
       getDiagnostics: async () => this.getDiagnostics(),
     };
 
@@ -100,6 +114,7 @@ export class FakeEnvironment {
       listGames: async () => this.listGames(),
       getSimulationCatalog: async () => this.getSimulationCatalog(),
       updateSimulation: async (request) => this.updateSimulation(request),
+      probeStreamHost: async (request) => this.probeStreamHost(request),
       launchGame: async (gameId) => this.launchGame(gameId),
       terminateSession: async (sessionId) => this.terminateSession(sessionId),
     };
@@ -188,6 +203,8 @@ export class FakeEnvironment {
     }
 
     await delay(this.stepDelayMs);
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail = "Remote display handoff cleared because the guest stopped.";
     const nextStatus: GuestStatusSnapshot = {
       guestPowerState: "offline",
       agentState: "offline",
@@ -212,30 +229,136 @@ export class FakeEnvironment {
   }
 
   async attachDisplay(): Promise<{ ok: boolean; detail: string }> {
-    if (this.status.streamHostState !== "ready") {
+    const activeSession = this.sessions.find(
+      (session) =>
+        session.id === this.status.activeSessionId &&
+        (session.runtimeState === "launching" || session.runtimeState === "running"),
+    );
+
+    if (!activeSession || activeSession.streamState !== "ready") {
+      this.remoteClientAttached = false;
+      this.lastDisplayAttachDetail =
+        "No stream-ready active session is available for remote display attachment.";
+      this.pushEvent({
+        type: "display.attach.failed",
+        level: "error",
+        message: this.lastDisplayAttachDetail,
+      });
+
       return {
         ok: false,
-        detail: "Sunshine/Moonlight path is not ready yet.",
+        detail: this.lastDisplayAttachDetail,
       };
     }
 
+    this.remoteClientAttached = true;
+    this.lastDisplayAttachDetail =
+      "Moonlight would attach here in the real runtime provider.";
+    this.pushEvent({
+      type: "display.attached",
+      level: "info",
+      message: this.lastDisplayAttachDetail,
+    });
+
     return {
       ok: true,
-      detail: "Moonlight would attach here in the real runtime provider.",
+      detail: this.lastDisplayAttachDetail,
+    };
+  }
+
+  async detachDisplay(): Promise<{ ok: boolean; detail: string }> {
+    if (!this.remoteClientAttached) {
+      this.lastDisplayAttachDetail = "No remote client is currently attached.";
+      this.pushEvent({
+        type: "display.detach.failed",
+        level: "error",
+        message: this.lastDisplayAttachDetail,
+      });
+
+      return {
+        ok: false,
+        detail: this.lastDisplayAttachDetail,
+      };
+    }
+
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote client detached. The stream path stays ready for another attachment.";
+    this.pushEvent({
+      type: "display.detached",
+      level: "info",
+      message: this.lastDisplayAttachDetail,
+    });
+
+    return {
+      ok: true,
+      detail: this.lastDisplayAttachDetail,
     };
   }
 
   async getDiagnostics(): Promise<RuntimeDiagnostics> {
+    const activeSession = this.sessions.find(
+      (session) =>
+        session.id === this.status.activeSessionId &&
+        (session.runtimeState === "launching" || session.runtimeState === "running"),
+    );
+    const activeGame = activeSession ? this.games.find((game) => game.id === activeSession.gameId) : undefined;
+    const activeSessionAgeMs = activeSession
+      ? Math.max(0, Date.now() - Date.parse(activeSession.startedAt))
+      : undefined;
+    const expectedReadyFromMetadata = activeGame
+      ? [
+          parseDelay(activeGame.guestMetadata.launchAcceptedDelayMs),
+          parseDelay(activeGame.guestMetadata.gameDetectedDelayMs),
+          parseDelay(activeGame.guestMetadata.streamReadyDelayMs),
+        ].reduce<number>((total, next) => total + (next ?? 0), 0)
+      : 0;
+    const activeSessionExpectedReadyMs =
+      activeSession && expectedReadyFromMetadata > 0 ? expectedReadyFromMetadata : undefined;
+    const remotePlayStalled = Boolean(
+      activeSession &&
+        activeSession.streamState !== "ready" &&
+        activeSessionAgeMs !== undefined &&
+        activeSessionExpectedReadyMs !== undefined &&
+        activeSessionAgeMs > activeSessionExpectedReadyMs + 2000,
+    );
+
     const diagnostics: RuntimeDiagnostics = {
       warnings: [...this.status.warnings],
       sessionCount: this.sessions.length,
       guestAgentReachable: this.status.guestPowerState === "running",
       eventStreamConnected: this.status.guestPowerState === "running",
-      remotePlayReady: this.status.streamHostState === "ready",
+      eventStreamState:
+        this.status.guestPowerState === "running" ? "connected" : "disconnected",
+      eventStreamReconnectAttempts: 0,
+      remotePlayReady: activeSession?.streamState === "ready",
+      remotePlayStalled,
+      remoteClientAttached: this.remoteClientAttached,
+      activeSessionRunning: Boolean(activeSession),
+      activeSessionStreamReady: activeSession?.streamState === "ready",
     };
 
     if (this.status.connectedGuestName) {
       diagnostics.connectedGuestName = this.status.connectedGuestName;
+    }
+
+    if (activeSession) {
+      diagnostics.activeSessionId = activeSession.id;
+      if (activeSessionAgeMs !== undefined) {
+        diagnostics.activeSessionAgeMs = activeSessionAgeMs;
+      }
+      if (activeSessionExpectedReadyMs !== undefined) {
+        diagnostics.activeSessionExpectedReadyMs = activeSessionExpectedReadyMs;
+      }
+    }
+
+    if (remotePlayStalled) {
+      diagnostics.remotePlayStallDetail =
+        "The active session has exceeded its expected stream-ready timing window.";
+    }
+
+    if (this.lastDisplayAttachDetail) {
+      diagnostics.lastDisplayAttachDetail = this.lastDisplayAttachDetail;
     }
 
     return diagnostics;
@@ -306,11 +429,33 @@ export class FakeEnvironment {
     if (request.streamReadyDelayMs !== undefined) {
       profile.streamReadyDelayMs = request.streamReadyDelayMs;
     }
+    if (request.streamProbeProcessNames !== undefined) {
+      profile.streamProbeProcessNames = [...request.streamProbeProcessNames];
+    }
+    if (request.streamProbePorts !== undefined) {
+      profile.streamProbePorts = [...request.streamProbePorts];
+    }
 
     this.applySimulationProfiles(this.games);
 
     return {
       games: this.listSimulationProfiles(),
+    };
+  }
+
+  async probeStreamHost(request: StreamProbeRequest): Promise<StreamProbeResult> {
+    const ports = request.ports && request.ports.length > 0 ? [...request.ports] : [47984, 47989];
+
+    return {
+      ok: this.status.guestPowerState === "running",
+      mode: "fake-stream-probe",
+      detail:
+        this.status.guestPowerState === "running"
+          ? `Fake runtime reports Sunshine-compatible listener port(s) ${ports.join(", ")}.`
+          : "Fake runtime cannot probe stream readiness while the guest is offline.",
+      checkedAt: now(),
+      processName: "sunshine",
+      listeningPorts: ports,
     };
   }
 
@@ -339,6 +484,9 @@ export class FakeEnvironment {
     this.sessions = [session, ...this.sessions];
     this.status.activeSessionId = session.id;
     this.status.streamHostState = "preparing";
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote client must attach again after a new launch reaches stream readiness.";
     this.pushEvent({
       type: "session.launch.requested",
       level: "info",
@@ -395,6 +543,9 @@ export class FakeEnvironment {
     session.endedAt = now();
     delete this.status.activeSessionId;
     this.status.streamHostState = "ready";
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote display handoff cleared because the active session was terminated.";
 
     this.pushEvent({
       type: "session.ended",
@@ -434,6 +585,8 @@ export class FakeEnvironment {
         launchAcceptedDelayMs: 250,
         gameDetectedDelayMs: 350,
         streamReadyDelayMs: 500,
+        streamProbeProcessNames: ["sunshine", "Sunshine", "sunshine-tray"],
+        streamProbePorts: [47984, 47989, 47990, 48010],
       });
     }
   }
@@ -457,6 +610,8 @@ export class FakeEnvironment {
       game.guestMetadata.launchAcceptedDelayMs = String(profile.launchAcceptedDelayMs);
       game.guestMetadata.gameDetectedDelayMs = String(profile.gameDetectedDelayMs);
       game.guestMetadata.streamReadyDelayMs = String(profile.streamReadyDelayMs);
+      game.guestMetadata.streamProbeProcessNames = profile.streamProbeProcessNames?.join(";") ?? "";
+      game.guestMetadata.streamProbePorts = profile.streamProbePorts?.join(";") ?? "";
     }
   }
 }

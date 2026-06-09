@@ -67,6 +67,10 @@ export type SessionEventType =
   | "guest.scan.started"
   | "guest.scan.completed"
   | "guest.scan.failed"
+  | "display.attached"
+  | "display.attach.failed"
+  | "display.detached"
+  | "display.detach.failed"
   | "session.launch.requested"
   | "session.launch.started"
   | "session.game.detected"
@@ -97,12 +101,23 @@ export interface RuntimeDiagnostics {
   sessionCount: number;
   guestAgentReachable?: boolean;
   eventStreamConnected?: boolean;
+  eventStreamState?: "disconnected" | "connecting" | "connected" | "reconnecting";
+  eventStreamReconnectAttempts?: number;
   remotePlayReady?: boolean;
+  remotePlayStalled?: boolean;
+  remotePlayStallDetail?: string;
+  remoteClientAttached?: boolean;
+  activeSessionId?: string;
+  activeSessionRunning?: boolean;
+  activeSessionStreamReady?: boolean;
+  activeSessionAgeMs?: number;
+  activeSessionExpectedReadyMs?: number;
   connectedGuestName?: string;
   lastGuestAgentError?: string;
   lastEventStreamError?: string;
   lastScanError?: string;
   lastSessionError?: string;
+  lastDisplayAttachDetail?: string;
 }
 
 export interface SimulationGameProfile {
@@ -112,6 +127,8 @@ export interface SimulationGameProfile {
   launchAcceptedDelayMs: number;
   gameDetectedDelayMs: number;
   streamReadyDelayMs: number;
+  streamProbeProcessNames?: string[];
+  streamProbePorts?: number[];
 }
 
 export interface SimulationCatalog {
@@ -125,6 +142,23 @@ export interface SimulationUpdateRequest {
   launchAcceptedDelayMs?: number;
   gameDetectedDelayMs?: number;
   streamReadyDelayMs?: number;
+  streamProbeProcessNames?: string[];
+  streamProbePorts?: number[];
+}
+
+export interface StreamProbeRequest {
+  processNames?: string[];
+  ports?: number[];
+  timeoutMs?: number;
+}
+
+export interface StreamProbeResult {
+  ok: boolean;
+  mode: string;
+  detail: string;
+  checkedAt: string;
+  processName?: string;
+  listeningPorts: number[];
 }
 
 export interface RuntimeProvider {
@@ -133,6 +167,7 @@ export interface RuntimeProvider {
   startGuest(): Promise<GuestStatusSnapshot>;
   stopGuest(force?: boolean): Promise<GuestStatusSnapshot>;
   attachDisplay(): Promise<{ ok: boolean; detail: string }>;
+  detachDisplay(): Promise<{ ok: boolean; detail: string }>;
   getDiagnostics(): Promise<RuntimeDiagnostics>;
 }
 
@@ -142,6 +177,7 @@ export interface GuestConnection {
   listGames(): Promise<GameRecord[]>;
   getSimulationCatalog(): Promise<SimulationCatalog>;
   updateSimulation(request: SimulationUpdateRequest): Promise<SimulationCatalog>;
+  probeStreamHost(request: StreamProbeRequest): Promise<StreamProbeResult>;
   launchGame(gameId: string): Promise<LaunchResult>;
   terminateSession(sessionId: string): Promise<GameSession | null>;
 }
@@ -162,11 +198,13 @@ export interface ManagedVmConfig {
 export interface HostConfig {
   runtimeProvider: RuntimeProviderId;
   managedVm: ManagedVmConfig;
+  pinnedGameIds: string[];
 }
 
 export interface HostConfigPatch {
   runtimeProvider?: RuntimeProviderId;
   managedVm?: Partial<ManagedVmConfig>;
+  pinnedGameIds?: string[];
 }
 
 export interface GuestAgentHealthResponse {
@@ -213,6 +251,10 @@ export interface GuestAgentSimulationCatalogResponse {
 }
 
 export interface GuestAgentSimulationUpdateRequest extends SimulationUpdateRequest {}
+
+export interface GuestAgentStreamProbeRequest extends StreamProbeRequest {}
+
+export interface GuestAgentStreamProbeResponse extends StreamProbeResult {}
 
 export interface DashboardEventMessage {
   type: "event";

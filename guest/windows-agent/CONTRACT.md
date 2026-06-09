@@ -20,10 +20,15 @@ The real Windows agent is not implemented yet, but the host-side contract is now
   - returns the current scaffolded launch simulation settings per game
 - `PUT /simulation`
   - updates scaffolded launch simulation settings per game
+  - can also update scaffolded Sunshine probe process names and listener ports per game
+- `POST /stream-probe`
+  - accepts optional Sunshine process names, listener ports, and timeout
+  - returns whether the stream host was observed plus process/listener detail when available
 - `POST /launch`
   - accepts `GuestAgentLaunchRequest`
   - returns `GuestAgentLaunchResponse`
   - current scaffold attempts a real Steam handoff for Steam titles on Windows before continuing the staged lifecycle model
+  - current scaffold attempts early Sunshine process/listener observation before reporting `session.streaming.ready`
 - `POST /terminate`
   - accepts `GuestAgentTerminateRequest`
   - terminates the active session by session id
@@ -42,6 +47,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
   - `GET /events` is the source of truth for later launch, process-detected, and stream-ready transitions
 - a launch may still fail immediately if the guest cannot hand off the request to the real launcher process
 - when the guest can observe a matching Windows game process, `session.game.detected` now reflects that observed process instead of only a simulated delay
+- when the guest can observe Sunshine readiness, `session.streaming.ready` reflects the observed process/listener detail instead of only a simulated delay
 - launch failures may also arrive asynchronously through `GET /events` after an initially accepted launch response
 
 ## Current Host Assumptions

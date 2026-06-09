@@ -1,6 +1,6 @@
 # Game VM Hub Handover
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 ## Goal
 
@@ -10,6 +10,7 @@ Track the setup, design decisions, experiments, and next actions for the Game VM
 
 - Treat `HANDOVER.md` as mandatory project memory.
 - Update this file after every relevant code change, architecture decision, prototype result, test run, or blocker.
+- Update `README.md` whenever the user-facing product description, feature set, setup flow, or supported behavior changes enough that the GitHub landing page would otherwise become misleading.
 - Record what changed, what was verified, and what remains open so a later session can continue without re-discovery.
 - Keep Git updated with local commits and remote pushes when a meaningful checkpoint or risky transition justifies it.
 - Do not store secrets in this file or anywhere else in the repo. This includes sudo passwords, API keys, tokens, private SSH keys, and credential material. Enter sensitive credentials interactively or keep them in a dedicated secret manager outside the project tree.
@@ -68,8 +69,218 @@ The current working assumption is:
   - guest unreachable / handoff failure diagnostics
   - recovery after guest stop or VM failure
 - Keep the UI and host API biased toward remote administration rather than requiring the host display during guest runtime.
+- Continue refining the managed-VM Sunshine workflow:
+  - keep the selected-game and simulation probe/apply paths aligned
+  - reduce repeated manual edits when observed probe targets are already known
+  - decide whether successful probe results should eventually auto-persist or remain an explicit operator action
 
 ## Change Log
+
+### 2026-06-08
+
+- Added an explicit handover workflow rule that `README.md` must be updated whenever user-facing behavior or the product description changes enough that the GitHub project page would otherwise be misleading.
+- Reworked `README.md` so the project intent is clear from the top of the file instead of reading mainly like a technical scaffold note.
+- Added explicit product-level sections covering:
+  - what Game VM Hub is
+  - the user-facing goal
+  - the remote-first single-GPU target play model
+  - planned features
+  - what works today
+  - what is still unfinished
+- Updated the documented host API route list in `README.md` so it also mentions diagnostics, recovery, and simulation endpoints already present in the app.
+- Added an explicit remote display handoff workflow across the host stack:
+  - `packages/shared-types/src/index.ts` now tracks remote-client attachment and last display-handoff detail in diagnostics
+  - `packages/runtime-sdk/src/fake-environment.ts` now models `attachDisplay()` as a stateful action instead of a stateless placeholder
+  - `packages/runtime-sdk/src/managed-vm-controller.ts` now records attach-display success/failure, clears attachment state on launch/session-end/stream-loss, and emits display-attachment timeline events
+  - `apps/host-web/src/App.tsx` now surfaces attach-display as a first-class remote-play action with banner guidance, diagnostics, and session-card detail
+- Updated verification for the remote display handoff slice:
+  - `packages/runtime-sdk/src/fake-environment.test.ts` now covers successful display attachment
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now covers both successful and premature attach-display attempts
+  - `apps/host-api/src/create-app.test.ts` now exercises `POST /api/runtime/attach-display`
+- Verified after the remote display handoff update:
+  - `npm test` passed
+  - `npm run build` passed
+- Extended the remote display workflow into a full attach/detach lifecycle:
+  - `packages/shared-types/src/index.ts` now includes detach-display runtime support and display detach event types
+  - `apps/host-api/src/create-app.ts` and `apps/host-api/src/state.ts` now expose `POST /api/runtime/detach-display`
+  - `packages/runtime-sdk/src/fake-environment.ts` and `packages/runtime-sdk/src/managed-vm-controller.ts` now let operators detach a remote client while leaving the guest session and ready stream path alive
+  - `apps/host-web/src/App.tsx` now adds a `Detach display` control alongside the existing attach flow
+- Updated verification for the detach-display slice:
+  - `packages/runtime-sdk/src/fake-environment.test.ts` now covers successful remote-client detachment
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now covers detach-display failure when no client is attached
+  - `apps/host-api/src/create-app.test.ts` now exercises `POST /api/runtime/detach-display`
+- Verified after the detach-display update:
+  - `npm test` passed
+  - `npm run build` passed
+- Corrected the meaning of remote-play readiness so it now requires an actual active stream-ready session instead of only a raw `streamHostState=ready` flag:
+  - `packages/shared-types/src/index.ts` now includes active-session diagnostics fields
+  - `packages/runtime-sdk/src/fake-environment.ts` and `packages/runtime-sdk/src/managed-vm-controller.ts` now report whether there is an active running session and whether that session is stream-ready
+  - attach-display now fails cleanly when no active stream-ready session exists, even if the guest runtime itself is still reachable
+  - `apps/host-web/src/App.tsx` now shows `No active play session` instead of a misleading remote-play-ready state after a session has already ended
+- Updated verification for the active-session readiness correction:
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now expects remote-play diagnostics to fall back to not-ready after session termination
+  - `apps/host-api/src/create-app.test.ts` now verifies the same corrected behavior through the API layer
+- Verified after the active-session readiness correction:
+  - `npm test` passed
+  - `npm run build` passed
+- Extended the dashboard with operator-friendly recent-session history:
+  - `apps/host-web/src/App.tsx` now shows the most recent sessions directly in the session panel instead of forcing the operator to infer everything from the raw event stream
+  - recent session cards now show session state, stream state, start/end times, and guest-side failure details when present
+  - completed, failed, and terminated sessions can now be relaunched directly from the recent-session list when the guest is running and no other session is active
+  - the main library launch buttons are now disabled while another active session is already running, matching the existing host-side launch rules more closely
+- Updated `apps/host-web/src/styles.css` with dedicated session-history layout and mobile behavior.
+- Verified after the recent-session dashboard update:
+  - `npm test` passed
+  - `npm run build` passed
+- Extended the library panel with selected-game details and explicit launch readiness:
+  - `apps/host-web/package.json` now depends on `@game-vm-hub/catalog-core` so the browser UI can reuse the same launch-readiness rule set as the runtime
+  - `apps/host-web/src/App.tsx` now keeps track of a selected game and shows a detail card with:
+    - launch-ready vs launch-blocked status
+    - the exact blocked-launch reason when launching is not currently allowed
+    - launch strategy, install root, last launch detail, last observed process, last launch mode, and last-seen time
+  - game cards in the catalog now show per-game launch readiness and use the shared `canLaunchGame()` rules instead of only relying on a disabled button with no explanation
+  - the selected-game card now offers a dedicated `Launch selected` action when the guest/runtime state allows it
+- Updated `apps/host-web/src/styles.css` with selected-game detail card styling and selected-catalog-card treatment.
+- Extended `packages/catalog-core/src/index.test.ts` with extra launch-readiness coverage for:
+  - not installed
+  - guest offline
+  - guest agent not ready
+- Verified after the selected-game readiness update:
+  - `npm install` completed with no dependency changes needed beyond the workspace graph refresh
+  - `npm test` passed
+  - `npm run build` passed
+- Added persistent pinned games to the host config and dashboard:
+  - `packages/shared-types/src/index.ts` now includes `pinnedGameIds` in `HostConfig` and `HostConfigPatch`
+  - `apps/host-api/src/config-store.ts` now persists pinned games alongside runtime provider settings
+  - `apps/host-api/src/create-app.ts` now accepts pinned-game config updates through the existing `PUT /api/config` route
+  - `apps/host-web/src/App.tsx` now supports pinning and unpinning games from both the selected-game card and the library cards
+  - the library now surfaces a dedicated pinned-games quick-launch section ordered by the persisted pin list
+- Updated `apps/host-web/src/styles.css` with pinned-game section styling and responsive behavior.
+- Extended verification for pinned games:
+  - `apps/host-api/src/create-app.test.ts` now verifies that pinned game ids persist to `data/host-config.json`
+- Verified after the pinned-games update:
+  - `npm install` completed successfully
+  - `npm test` passed
+  - `npm run build` passed
+- Hardened the pinned-games workflow so pins do not silently disappear when a later scan misses a previously pinned title:
+  - `apps/host-web/src/App.tsx` now renders pinned entries from the persisted pin list first and then resolves each entry against the current catalog
+  - pinned entries that are missing from the current scan now stay visible with a clear `missing from current catalog scan` state and an explicit unpin action
+  - the pinned-games section now reports how many pinned titles are currently missing from the scanned catalog
+- Updated `apps/host-web/src/styles.css` with a dedicated visual treatment for missing pinned games.
+- Verified after the missing-pin handling update:
+  - `npm test` passed
+  - `npm run build` passed
+- Extended pinned-game management so the persisted quick-launch list is easier to maintain:
+  - `apps/host-web/src/App.tsx` now supports moving pinned games up and down within the saved pin order
+  - the pinned-games section now exposes a bulk `Clear missing pins` action when some saved pins are not present in the current catalog scan
+  - missing pinned entries now keep the same reorder controls as discovered pinned entries, so the saved quick-launch order remains editable even while the guest catalog is incomplete
+- Updated `apps/host-web/src/styles.css` with layout for the pinned-games header actions and reorder controls.
+- Verified after the pin-management update:
+  - `npm test` passed
+  - `npm run build` passed
+- Hardened managed-VM event-stream recovery so the host can distinguish a dropped control link from a fully offline guest:
+  - `packages/shared-types/src/index.ts` now includes explicit event-stream diagnostics state plus reconnect-attempt tracking
+  - `packages/runtime-sdk/src/managed-vm-controller.ts` now auto-retries the guest SSE stream while the guest remains reachable instead of waiting for a manual recover every time the control stream drops
+  - `packages/runtime-sdk/src/fake-environment.ts` now reports the same event-stream diagnostics shape for provider parity
+  - `apps/host-web/src/App.tsx` now shows `reconnecting` control-link state in both the recovery banner and the runtime diagnostics panel
+- Extended verification for managed-VM event-stream recovery:
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now covers automatic recovery after an unexpected guest event-stream disconnect
+  - `apps/host-api/src/create-app.test.ts` now verifies the same reconnect behavior through the host API layer
+- Updated `README.md` so the current feature list mentions automatic managed-guest event-stream retry and explicit connected/reconnecting/disconnected UI reporting.
+- Verified after the event-stream recovery hardening:
+  - `npm test` passed
+  - `npm run build` passed
+- Added explicit remote-play stall diagnostics so the host can distinguish slow warm-up from a genuinely stuck guest handoff:
+  - `packages/shared-types/src/index.ts` now includes active-session timing plus remote-play stall diagnostics fields
+  - `packages/runtime-sdk/src/managed-vm-controller.ts` now estimates expected stream-ready timing from guest metadata when available, falls back to a default managed-VM threshold, and marks the active session as stalled when that window is exceeded
+  - `packages/runtime-sdk/src/fake-environment.ts` now exposes the same timing/stall diagnostics shape for provider parity
+  - `apps/host-web/src/App.tsx` now shows explicit stalled-stream recovery guidance, plus active-session age and expected-ready timing in the session diagnostics surface
+- Extended verification for remote-play stall diagnostics:
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` now covers a managed-VM launch that remains in `launching` long past the expected stream-ready budget
+  - `apps/host-api/src/create-app.test.ts` now verifies that stalled-stream diagnostics are exposed through `GET /api/diagnostics`
+- Updated `README.md` so the current feature list mentions remote-play stall detection and the distinction between normal warm-up and a genuinely stuck stream handoff.
+- Verified after the remote-play stall diagnostics update:
+  - `npm test` passed
+  - `npm run build` passed
+- Added an operator-facing stalled-launch restart workflow so the host can act on the new stall diagnostics instead of only reporting them:
+  - `apps/host-api/src/state.ts` now provides `recoverSession()` that can terminate an active stalled launch, refresh the runtime link, and relaunch the same game, or relaunch the most recent failed session when no active launch remains
+  - `apps/host-api/src/create-app.ts` now exposes `POST /api/runtime/recover-session`
+  - `apps/host-web/src/App.tsx` now routes failed-launch and stalled-launch recovery actions through the new session-recovery flow and adds a direct `Restart launch` action in the session panel when a stream handoff is stalled
+- Extended verification for stalled-launch recovery:
+  - `apps/host-api/src/create-app.test.ts` now covers the full managed-VM stalled-launch recovery sequence: terminate stalled session, refresh health, and relaunch the same game
+- Updated `README.md` so the feature summary and route list mention one-step stalled-launch recovery and `POST /api/runtime/recover-session`.
+- Verified after the stalled-launch recovery workflow update:
+  - `npm test` passed
+  - `npm run build` passed
+- Added early Sunshine stream-host observation in the Windows guest scaffold:
+  - `guest/windows-agent/SunshineStreamProbe.cs` now checks for a Sunshine process plus common Sunshine listener ports on Windows and returns observed stream-host detail when available
+  - `guest/windows-agent/Program.cs` now tries the Sunshine probe after game detection for real launch handoffs, records stream-ready metadata such as mode/detail/process/ports on the game record, and keeps the existing simulated stream-ready delay as the scaffold fallback
+  - the guest `session.streaming.ready` event now reports observed Sunshine detail when the probe succeeds instead of always using a generic simulated readiness message
+  - `apps/host-web/src/App.tsx` now shows stream-ready mode, detail, and stream-host ports in the selected-game diagnostics card
+- Updated guest and product documentation:
+  - `guest/windows-agent/README.md` now describes Sunshine process/listener observation and removes the stale claim that the scaffold cannot inspect Sunshine readiness at all
+  - `guest/windows-agent/CONTRACT.md` now documents observed Sunshine readiness as part of the current launch/event behavior
+  - `README.md` now mentions early Sunshine observation and visible guest stream-readiness detail
+- Verified after the Sunshine stream-host observation update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed with 0 warnings
+  - `npm test` passed
+  - `npm run build` passed
+- Made Sunshine stream-host probing configurable through the existing managed-VM scenario settings flow:
+  - `packages/shared-types/src/index.ts` now includes optional `streamProbeProcessNames` and `streamProbePorts` fields on simulation profiles and updates
+  - `guest/windows-agent/SunshineStreamProbe.cs` now accepts per-launch probe options instead of only using hard-coded process names and ports
+  - `guest/windows-agent/Program.cs` now persists, normalizes, returns, and applies per-game Sunshine probe process names and ports through `GET /simulation` and `PUT /simulation`
+  - `packages/runtime-sdk/src/fake-environment.ts` now carries the same probe fields for provider parity and exposes them in guest metadata
+  - `apps/host-web/src/App.tsx` now lets operators edit Sunshine process names and ports in the managed-VM launch scenario controls
+- Extended verification for configurable Sunshine probing:
+  - `packages/runtime-sdk/src/managed-vm-controller.test.ts` and `apps/host-api/src/create-app.test.ts` now assert that custom probe process names and ports are forwarded through simulation updates
+- Updated `README.md`, `guest/windows-agent/README.md`, and `guest/windows-agent/CONTRACT.md` to document configurable Sunshine probe targets.
+- Verified after the configurable Sunshine probe update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed with 0 warnings
+  - `npm test` passed
+  - `npm run build` passed
+- Added a direct Sunshine stream-host probe workflow that does not require launching a game:
+  - `packages/shared-types/src/index.ts` now defines stream-probe request/result contracts and exposes `probeStreamHost()` on guest connections
+  - `guest/windows-agent/Program.cs` now exposes `POST /stream-probe` and runs the configurable Sunshine process/listener probe with an optional timeout
+  - `packages/runtime-sdk/src/managed-vm-controller.ts` now forwards managed-guest probe requests to `/stream-probe`
+  - `apps/host-api/src/create-app.ts` now exposes `POST /api/runtime/probe-stream-host`
+  - `apps/host-web/src/App.tsx` now adds a `Test Sunshine` action in the managed-VM scenario controls and displays the last probe result per game profile
+- Extended verification for the direct Sunshine probe workflow:
+  - `apps/host-api/src/create-app.test.ts` now exercises `POST /api/runtime/probe-stream-host` and verifies custom process names/ports reach the guest endpoint
+- Updated `README.md`, `guest/windows-agent/README.md`, and `guest/windows-agent/CONTRACT.md` to document the direct stream-host probe route and behavior.
+- Verified after the direct Sunshine probe workflow update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed with 0 warnings
+  - `npm test` passed
+  - `npm run build` passed
+- Made the direct Sunshine probe result actionable in the managed-VM scenario UI:
+  - `apps/host-web/src/App.tsx` now shows observed process/port detail after a successful `Test Sunshine` probe
+  - successful probe results now expose a `Use observed targets` action that persists the observed Sunshine process and listener ports back through the existing `/api/simulation` update path
+  - `apps/host-web/src/styles.css` now groups the probe result as a dedicated diagnostic block
+- Updated `README.md` so the current feature list mentions applying observed stream-probe targets back into scenario config.
+- Verified after the observed-probe-target apply workflow update:
+  - `npm test` passed
+  - `npm run build` passed
+- Added the Sunshine probe/apply loop to the selected-game panel:
+  - `apps/host-web/src/App.tsx` now maps simulation profiles by game id so the selected-game card can show its configured Sunshine process and port targets
+  - the selected-game card now exposes `Test selected Sunshine` for managed-VM games with a simulation profile and reuses the same probe result state as the scenario controls
+  - successful selected-game probes can now be applied with `Use observed targets` without scrolling to the scenario section
+  - `apps/host-web/src/styles.css` now lets selected-game actions wrap cleanly when multiple probe/launch buttons are visible
+- Verified after the selected-game Sunshine probe action update:
+  - `npm test` passed
+  - `npm run build` passed
+- Reduced redundant Sunshine probe/apply work in the dashboard:
+  - `apps/host-web/src/App.tsx` now detects whether a successful stream-probe result is already covered by the saved simulation profile process/port targets
+  - both the selected-game panel and managed-VM scenario cards now show whether observed targets are already covered or can still be saved
+  - the `Use observed targets` button now becomes a non-destructive `Targets already saved` disabled state when applying the result would not add useful probe coverage
+  - `apps/host-web/src/styles.css` now styles the probe-target state line
+- Updated `README.md` so the current feature list mentions detecting already-covered stream-probe targets.
+- Verified after the Sunshine probe target coverage update:
+  - `npm test` passed
+  - `npm run build` passed
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed with 0 warnings
+- Current workspace state at handoff:
+  - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
+  - the latest user-facing slice is the Sunshine probe target coverage check in the selected-game and scenario panels
+  - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06
 

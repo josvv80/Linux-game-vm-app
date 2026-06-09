@@ -18,6 +18,7 @@ interface UpdateConfigBody {
     vmName?: string;
     guestAgentBaseUrl?: string;
   };
+  pinnedGameIds?: string[];
 }
 
 interface UpdateSimulationBody {
@@ -27,6 +28,14 @@ interface UpdateSimulationBody {
   launchAcceptedDelayMs?: number;
   gameDetectedDelayMs?: number;
   streamReadyDelayMs?: number;
+  streamProbeProcessNames?: string[];
+  streamProbePorts?: number[];
+}
+
+interface ProbeStreamBody {
+  processNames?: string[];
+  ports?: number[];
+  timeoutMs?: number;
 }
 
 export function buildApp(state: AppState = createAppState()) {
@@ -62,14 +71,19 @@ export function buildApp(state: AppState = createAppState()) {
 
   app.post("/api/runtime/start", async () => state.startRuntime());
   app.post("/api/runtime/recover", async () => state.prepareRuntime());
+  app.post("/api/runtime/recover-session", async () => state.recoverSession());
   app.post("/api/runtime/stop", async (request) =>
     state.stopRuntime(Boolean((request.body as StopRuntimeBody | undefined)?.force)),
   );
+  app.post("/api/runtime/detach-display", async () => state.detachDisplay());
   app.put("/api/config", async (request) =>
     state.updateConfig(request.body as UpdateConfigBody),
   );
   app.put("/api/simulation", async (request) =>
     state.updateSimulation(request.body as UpdateSimulationBody),
+  );
+  app.post("/api/runtime/probe-stream-host", async (request) =>
+    state.probeStreamHost(request.body as ProbeStreamBody),
   );
   app.post("/api/catalog/scan", async () => state.scanCatalog());
   app.post("/api/runtime/attach-display", async () => state.attachDisplay());

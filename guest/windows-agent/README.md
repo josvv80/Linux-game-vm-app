@@ -4,7 +4,7 @@ This directory now contains a minimal .NET 10 guest-agent scaffold that matches 
 
 Current scaffold behavior:
 
-- exposes `GET /health`, `POST /register`, `POST /scan`, `GET /games`, `GET /simulation`, `PUT /simulation`, `POST /launch`, `POST /terminate`, and `GET /events`
+- exposes `GET /health`, `POST /register`, `POST /scan`, `GET /games`, `GET /simulation`, `PUT /simulation`, `POST /stream-probe`, `POST /launch`, `POST /terminate`, and `GET /events`
 - keeps in-memory guest status, catalog, sessions, and recent event history
 - scans real Steam library manifests when they are present on Windows
 - falls back to sample Steam data when no Windows Steam libraries are discovered
@@ -17,6 +17,10 @@ Current scaffold behavior:
   - derives candidate `.exe` names from the discovered install root
   - uses observed Windows process names when available for `session.game.detected`
   - falls back to the existing simulated detect step when no candidate process is observed in time
+- attempts early Sunshine stream-host observation after launch:
+  - watches for a Sunshine process and common Sunshine listener ports on Windows
+  - records stream-ready mode, detail, process name, and listener ports in game metadata when observed
+  - falls back to the existing simulated stream-ready delay when Sunshine cannot be observed
 - streams event envelopes over Server-Sent Events from `GET /events`
 - simulates a staged launch lifecycle:
   - launch queued
@@ -28,12 +32,14 @@ Current scaffold behavior:
 - supports simulation control without code edits:
   - switch a game between success and failure behavior
   - adjust launch, detect, and stream-ready delays per game
+  - adjust Sunshine probe process names and listener ports per game
+- supports direct Sunshine stream-host probing without launching a game
 
 What it does not do yet:
 
 - run as a Windows service
 - guarantee accurate per-title process detection for every Steam game shape
-- inspect Sunshine readiness from the Windows guest
+- provide production-grade Sunshine/Moonlight readiness or client-attachment orchestration
 - scan real Ubisoft Connect installs
 
 Local run command on a machine with .NET 10 installed:
@@ -47,4 +53,5 @@ Default useful URLs:
 - `http://127.0.0.1:5000/health`
 - `http://127.0.0.1:5000/games`
 - `http://127.0.0.1:5000/simulation`
+- `http://127.0.0.1:5000/stream-probe`
 - `http://127.0.0.1:5000/events`

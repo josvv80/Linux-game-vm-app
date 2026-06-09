@@ -8,6 +8,7 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@game-vm-hub/catalog-core": "0.1.0",
     "@game-vm-hub/shared-types": "0.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

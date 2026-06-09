@@ -9,6 +9,7 @@ export const defaultHostConfig: HostConfig = {
     guestAgentBaseUrl: "http://127.0.0.1:8765",
     streamMode: "sunshine-moonlight",
   },
+  pinnedGameIds: [],
 };
 
 function mergeConfig(base: HostConfig, patch: HostConfigPatch): HostConfig {
@@ -18,6 +19,7 @@ function mergeConfig(base: HostConfig, patch: HostConfigPatch): HostConfig {
       ...base.managedVm,
       ...patch.managedVm,
     },
+    pinnedGameIds: patch.pinnedGameIds ?? base.pinnedGameIds,
   };
 }
 

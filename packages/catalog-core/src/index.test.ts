@@ -57,6 +57,27 @@ describe("mergeGameRecords", () => {
 });
 
 describe("canLaunchGame", () => {
+  it("rejects launch when the game is not installed", () => {
+    expect(canLaunchGame(createGame({ installState: "not-installed" }), createStatus())).toEqual({
+      canLaunch: false,
+      reason: "Game is not installed in the guest.",
+    });
+  });
+
+  it("rejects launch when the guest is offline", () => {
+    expect(canLaunchGame(createGame(), createStatus({ guestPowerState: "offline" }))).toEqual({
+      canLaunch: false,
+      reason: "Windows guest is not running.",
+    });
+  });
+
+  it("rejects launch when the guest agent is not ready", () => {
+    expect(canLaunchGame(createGame(), createStatus({ agentState: "booting" }))).toEqual({
+      canLaunch: false,
+      reason: "Windows guest agent is not ready.",
+    });
+  });
+
   it("rejects launch when another session is active", () => {
     const result = canLaunchGame(createGame(), createStatus({ activeSessionId: "session-1" }));
 
@@ -70,4 +91,3 @@ describe("canLaunchGame", () => {
     expect(canLaunchGame(createGame(), createStatus())).toEqual({ canLaunch: true });
   });
 });
-

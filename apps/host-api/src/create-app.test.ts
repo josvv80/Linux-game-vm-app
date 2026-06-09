@@ -66,6 +66,10 @@ afterEach(async () => {
   }
 });
 
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe("host API", () => {
   it("boots the fake guest and returns status", async () => {
     const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
@@ -136,6 +140,32 @@ describe("host API", () => {
     });
   });
 
+  it("persists pinned game ids in host config", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+    const app = buildApp(new AppState(new ConfigStore(configPath), defaultHostConfig));
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/config",
+      payload: {
+        pinnedGameIds: ["steam:app-400", "ubisoft-connect:anno-1800"],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().pinnedGameIds).toEqual([
+      "steam:app-400",
+      "ubisoft-connect:anno-1800",
+    ]);
+
+    const raw = await readFile(configPath, "utf8");
+    expect(JSON.parse(raw)).toMatchObject({
+      pinnedGameIds: ["steam:app-400", "ubisoft-connect:anno-1800"],
+    });
+  });
+
   it("exercises managed-vm endpoints against the guest-agent contract", async () => {
     const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
     const configPath = join(dir, "host-config.json");
@@ -147,6 +177,7 @@ describe("host API", () => {
         guestAgentBaseUrl: "http://127.0.0.1:8765",
         streamMode: "sunshine-moonlight",
       },
+      pinnedGameIds: [],
     };
 
     const stream = createEventStream();
@@ -297,6 +328,17 @@ describe("host API", () => {
             return jsonResponse(simulationCatalog);
           }
 
+          if (url.pathname === "/stream-probe") {
+            return jsonResponse({
+              ok: true,
+              mode: "sunshine-process-and-port",
+              detail: "Sunshine process sunshine is running with listener port(s) 47984.",
+              checkedAt: "2026-06-08T12:03:00.000Z",
+              processName: "sunshine",
+              listeningPorts: [47984],
+            });
+          }
+
           if (url.pathname === "/launch") {
             emitEvent(
               {
@@ -389,6 +431,26 @@ describe("host API", () => {
     expect(launchResponse.statusCode).toBe(200);
     expect(launchResponse.json().session.id).toBe("session-1");
 
+    const attachDisplayResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/attach-display",
+    });
+    expect(attachDisplayResponse.statusCode).toBe(200);
+    expect(attachDisplayResponse.json()).toMatchObject({
+      ok: true,
+      detail: "Remote play path is ready. Attach Moonlight or another client to begin play.",
+    });
+
+    const detachDisplayResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/detach-display",
+    });
+    expect(detachDisplayResponse.statusCode).toBe(200);
+    expect(detachDisplayResponse.json()).toMatchObject({
+      ok: true,
+      detail: "Remote client detached. The stream path stays ready for another attachment.",
+    });
+
     const terminateResponse = await app.inject({
       method: "POST",
       url: "/api/sessions/session-1/terminate",
@@ -412,8 +474,12 @@ describe("host API", () => {
     expect(diagnosticsResponse.json()).toMatchObject({
       guestAgentReachable: true,
       eventStreamConnected: true,
-      remotePlayReady: true,
+      remotePlayReady: false,
+      remoteClientAttached: false,
+      activeSessionRunning: false,
+      activeSessionStreamReady: false,
       connectedGuestName: "Windows Gaming VM",
+      lastDisplayAttachDetail: "Remote display handoff cleared because the guest session ended.",
       sessionCount: 1,
     });
 
@@ -439,6 +505,8 @@ describe("host API", () => {
         outcome: "fail-before-stream-ready",
         failureMessage: "Portal failed before remote play became ready.",
         streamReadyDelayMs: 900,
+        streamProbeProcessNames: ["sunshine", "sunshine-service"],
+        streamProbePorts: [47984, 48010],
       },
     });
     expect(simulationUpdateResponse.statusCode).toBe(200);
@@ -449,8 +517,27 @@ describe("host API", () => {
           outcome: "fail-before-stream-ready",
           failureMessage: "Portal failed before remote play became ready.",
           streamReadyDelayMs: 900,
+          streamProbeProcessNames: ["sunshine", "sunshine-service"],
+          streamProbePorts: [47984, 48010],
         },
       ],
+    });
+
+    const streamProbeResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/probe-stream-host",
+      payload: {
+        processNames: ["sunshine", "sunshine-service"],
+        ports: [47984, 48010],
+        timeoutMs: 1200,
+      },
+    });
+    expect(streamProbeResponse.statusCode).toBe(200);
+    expect(streamProbeResponse.json()).toMatchObject({
+      ok: true,
+      mode: "sunshine-process-and-port",
+      processName: "sunshine",
+      listeningPorts: [47984],
     });
 
     expect(calls).toEqual([
@@ -468,6 +555,17 @@ describe("host API", () => {
           outcome: "fail-before-stream-ready",
           failureMessage: "Portal failed before remote play became ready.",
           streamReadyDelayMs: 900,
+          streamProbeProcessNames: ["sunshine", "sunshine-service"],
+          streamProbePorts: [47984, 48010],
+        }),
+      },
+      {
+        path: "/stream-probe",
+        method: "POST",
+        body: JSON.stringify({
+          processNames: ["sunshine", "sunshine-service"],
+          ports: [47984, 48010],
+          timeoutMs: 1200,
         }),
       },
     ]);
@@ -486,6 +584,7 @@ describe("host API", () => {
         guestAgentBaseUrl: "http://127.0.0.1:8765",
         streamMode: "sunshine-moonlight",
       },
+      pinnedGameIds: [],
     };
 
     let streamAvailable = false;
@@ -547,6 +646,8 @@ describe("host API", () => {
     expect(diagnosticsBefore.json()).toMatchObject({
       guestAgentReachable: true,
       eventStreamConnected: false,
+      eventStreamState: "reconnecting",
+      eventStreamReconnectAttempts: 1,
     });
 
     streamAvailable = true;
@@ -563,8 +664,406 @@ describe("host API", () => {
     expect(diagnosticsAfter.json()).toMatchObject({
       guestAgentReachable: true,
       eventStreamConnected: true,
+      eventStreamState: "connected",
+      eventStreamReconnectAttempts: 0,
       connectedGuestName: "Windows Gaming VM",
     });
+
+    stream.close();
+  });
+
+  it("automatically restores the managed-vm event stream through the host API after a disconnect", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+    const firstStream = createEventStream();
+    const secondStream = createEventStream();
+
+    const managedConfig: HostConfig = {
+      runtimeProvider: "managed-vm",
+      managedVm: {
+        vmName: "windows-vfio",
+        guestAgentBaseUrl: "http://127.0.0.1:8765",
+        streamMode: "sunshine-moonlight",
+      },
+      pinnedGameIds: [],
+    };
+
+    let eventStreamRequestCount = 0;
+    const runtimeFactory = (config: HostConfig) =>
+      new ManagedVmController(config, {
+        eventStreamReconnectDelayMs: 5,
+        fetchImpl: async (input) => {
+          const url =
+            typeof input === "string"
+              ? new URL(input)
+              : input instanceof URL
+                ? input
+                : new URL(input.url);
+
+          if (url.pathname === "/health") {
+            return jsonResponse({
+              guestName: "Windows Gaming VM",
+              agentVersion: "0.1.0",
+              status: {
+                guestPowerState: "running",
+                agentState: "ready",
+                streamHostState: "preparing",
+                scanState: "idle",
+                warnings: [],
+                connectedGuestName: "Windows Gaming VM",
+              },
+            } satisfies GuestAgentHealthResponse);
+          }
+
+          if (url.pathname === "/events") {
+            eventStreamRequestCount += 1;
+            return eventStreamRequestCount === 1 ? firstStream.response : secondStream.response;
+          }
+
+          return jsonResponse({ message: "Not found" }, 404);
+        },
+      });
+
+    await writeFile(configPath, `${JSON.stringify(managedConfig, null, 2)}\n`, "utf8");
+
+    const app = buildApp(
+      new AppState(new ConfigStore(configPath), defaultHostConfig, runtimeFactory),
+    );
+    apps.push(app);
+
+    const startResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/start",
+    });
+    expect(startResponse.statusCode).toBe(200);
+
+    firstStream.close();
+    await sleep(60);
+
+    const diagnosticsResponse = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics",
+    });
+    expect(diagnosticsResponse.statusCode).toBe(200);
+    expect(diagnosticsResponse.json()).toMatchObject({
+      guestAgentReachable: true,
+      eventStreamConnected: true,
+      eventStreamState: "connected",
+      eventStreamReconnectAttempts: 0,
+      connectedGuestName: "Windows Gaming VM",
+    });
+    expect(eventStreamRequestCount).toBeGreaterThanOrEqual(2);
+
+    firstStream.close();
+    secondStream.close();
+  });
+
+  it("surfaces stalled managed-vm stream readiness through the host API diagnostics", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+    const stream = createEventStream();
+
+    const managedConfig: HostConfig = {
+      runtimeProvider: "managed-vm",
+      managedVm: {
+        vmName: "windows-vfio",
+        guestAgentBaseUrl: "http://127.0.0.1:8765",
+        streamMode: "sunshine-moonlight",
+      },
+      pinnedGameIds: [],
+    };
+
+    const runtimeFactory = (config: HostConfig) =>
+      new ManagedVmController(config, {
+        fetchImpl: async (input) => {
+          const url =
+            typeof input === "string"
+              ? new URL(input)
+              : input instanceof URL
+                ? input
+                : new URL(input.url);
+
+          if (url.pathname === "/health") {
+            return jsonResponse({
+              guestName: "Windows Gaming VM",
+              agentVersion: "0.1.0",
+              status: {
+                guestPowerState: "running",
+                agentState: "ready",
+                streamHostState: "preparing",
+                scanState: "idle",
+                warnings: [],
+                connectedGuestName: "Windows Gaming VM",
+              },
+            } satisfies GuestAgentHealthResponse);
+          }
+
+          if (url.pathname === "/events") {
+            return stream.response;
+          }
+
+          if (url.pathname === "/scan") {
+            return jsonResponse({
+              games: [
+                {
+                  id: "steam:app-400",
+                  title: "Portal",
+                  launcher: "steam",
+                  installState: "installed",
+                  launchCommandRef: "steam://run/400",
+                  lastSeenAt: "2026-06-08T12:00:00.000Z",
+                  compatibilityFlags: ["prototype"],
+                  guestMetadata: {
+                    launchAcceptedDelayMs: "250",
+                    gameDetectedDelayMs: "350",
+                    streamReadyDelayMs: "500",
+                  },
+                },
+              ],
+              scannedAt: "2026-06-08T12:00:01.000Z",
+            } satisfies GuestAgentGameListResponse);
+          }
+
+          if (url.pathname === "/launch") {
+            return jsonResponse({
+              session: {
+                id: "session-stalled",
+                gameId: "steam:app-400",
+                runtimeState: "launching",
+                guestState: "online",
+                streamState: "preparing",
+                startedAt: new Date(Date.now() - 6000).toISOString(),
+              },
+            } satisfies GuestAgentLaunchResponse);
+          }
+
+          return jsonResponse({ message: "Not found" }, 404);
+        },
+      });
+
+    await writeFile(configPath, `${JSON.stringify(managedConfig, null, 2)}\n`, "utf8");
+
+    const app = buildApp(
+      new AppState(new ConfigStore(configPath), defaultHostConfig, runtimeFactory),
+    );
+    apps.push(app);
+
+    await app.inject({
+      method: "POST",
+      url: "/api/runtime/start",
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/catalog/scan",
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: {
+        gameId: "steam:app-400",
+      },
+    });
+
+    const diagnosticsResponse = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics",
+    });
+    expect(diagnosticsResponse.statusCode).toBe(200);
+    expect(diagnosticsResponse.json()).toMatchObject({
+      remotePlayReady: false,
+      remotePlayStalled: true,
+      activeSessionRunning: true,
+      activeSessionStreamReady: false,
+      activeSessionExpectedReadyMs: 1100,
+    });
+    expect(diagnosticsResponse.json().activeSessionAgeMs).toBeGreaterThanOrEqual(6000);
+    expect(diagnosticsResponse.json().remotePlayStallDetail).toContain(
+      "expected readiness was around 1.1s",
+    );
+
+    stream.close();
+  });
+
+  it("restarts a stalled managed-vm launch through the host API recovery flow", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const configPath = join(dir, "host-config.json");
+    const stream = createEventStream();
+
+    const managedConfig: HostConfig = {
+      runtimeProvider: "managed-vm",
+      managedVm: {
+        vmName: "windows-vfio",
+        guestAgentBaseUrl: "http://127.0.0.1:8765",
+        streamMode: "sunshine-moonlight",
+      },
+      pinnedGameIds: [],
+    };
+
+    const calls: Array<{ path: string; method: string; body: string | null }> = [];
+    let launchRequestCount = 0;
+    const runtimeFactory = (config: HostConfig) =>
+      new ManagedVmController(config, {
+        fetchImpl: async (input, init) => {
+          const url =
+            typeof input === "string"
+              ? new URL(input)
+              : input instanceof URL
+                ? input
+                : new URL(input.url);
+          const method = init?.method ?? "GET";
+          const body = typeof init?.body === "string" ? init.body : null;
+
+          calls.push({
+            path: url.pathname,
+            method,
+            body,
+          });
+
+          if (url.pathname === "/health") {
+            return jsonResponse({
+              guestName: "Windows Gaming VM",
+              agentVersion: "0.1.0",
+              status: {
+                guestPowerState: "running",
+                agentState: "ready",
+                streamHostState: "preparing",
+                scanState: "idle",
+                warnings: [],
+                connectedGuestName: "Windows Gaming VM",
+              },
+            } satisfies GuestAgentHealthResponse);
+          }
+
+          if (url.pathname === "/events") {
+            return stream.response;
+          }
+
+          if (url.pathname === "/scan") {
+            return jsonResponse({
+              games: [
+                {
+                  id: "steam:app-400",
+                  title: "Portal",
+                  launcher: "steam",
+                  installState: "installed",
+                  launchCommandRef: "steam://run/400",
+                  lastSeenAt: "2026-06-08T12:00:00.000Z",
+                  compatibilityFlags: ["prototype"],
+                  guestMetadata: {
+                    launchAcceptedDelayMs: "250",
+                    gameDetectedDelayMs: "350",
+                    streamReadyDelayMs: "500",
+                  },
+                },
+              ],
+              scannedAt: "2026-06-08T12:00:01.000Z",
+            } satisfies GuestAgentGameListResponse);
+          }
+
+          if (url.pathname === "/launch") {
+            launchRequestCount += 1;
+
+            if (launchRequestCount === 1) {
+              return jsonResponse({
+                session: {
+                  id: "session-stalled",
+                  gameId: "steam:app-400",
+                  runtimeState: "launching",
+                  guestState: "online",
+                  streamState: "preparing",
+                  startedAt: new Date(Date.now() - 6000).toISOString(),
+                },
+              } satisfies GuestAgentLaunchResponse);
+            }
+
+            return jsonResponse({
+              session: {
+                id: "session-recovered",
+                gameId: "steam:app-400",
+                runtimeState: "launching",
+                guestState: "online",
+                streamState: "preparing",
+                startedAt: new Date().toISOString(),
+              },
+            } satisfies GuestAgentLaunchResponse);
+          }
+
+          if (url.pathname === "/terminate") {
+            return jsonResponse({
+              id: "session-stalled",
+              gameId: "steam:app-400",
+              runtimeState: "terminated",
+              guestState: "ready",
+              streamState: "unavailable",
+              startedAt: new Date(Date.now() - 6000).toISOString(),
+              endedAt: new Date().toISOString(),
+            } satisfies GameSession);
+          }
+
+          return jsonResponse({ message: "Not found" }, 404);
+        },
+      });
+
+    await writeFile(configPath, `${JSON.stringify(managedConfig, null, 2)}\n`, "utf8");
+
+    const app = buildApp(
+      new AppState(new ConfigStore(configPath), defaultHostConfig, runtimeFactory),
+    );
+    apps.push(app);
+
+    await app.inject({
+      method: "POST",
+      url: "/api/runtime/start",
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/catalog/scan",
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: {
+        gameId: "steam:app-400",
+      },
+    });
+
+    const recoverResponse = await app.inject({
+      method: "POST",
+      url: "/api/runtime/recover-session",
+    });
+    expect(recoverResponse.statusCode).toBe(200);
+    expect(recoverResponse.json()).toMatchObject({
+      session: {
+        id: "session-recovered",
+        gameId: "steam:app-400",
+      },
+    });
+
+    const diagnosticsResponse = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics",
+    });
+    expect(diagnosticsResponse.statusCode).toBe(200);
+    expect(diagnosticsResponse.json()).toMatchObject({
+      remotePlayReady: false,
+      remotePlayStalled: false,
+      activeSessionRunning: true,
+      activeSessionId: "session-recovered",
+    });
+
+    expect(calls).toEqual([
+      { path: "/health", method: "GET", body: null },
+      { path: "/events", method: "GET", body: null },
+      { path: "/scan", method: "POST", body: null },
+      { path: "/launch", method: "POST", body: JSON.stringify({ gameId: "steam:app-400" }) },
+      { path: "/terminate", method: "POST", body: JSON.stringify({ sessionId: "session-stalled" }) },
+      { path: "/health", method: "GET", body: null },
+      { path: "/launch", method: "POST", body: JSON.stringify({ gameId: "steam:app-400" }) },
+    ]);
 
     stream.close();
   });
@@ -581,6 +1080,7 @@ describe("host API", () => {
         guestAgentBaseUrl: "http://127.0.0.1:8765",
         streamMode: "sunshine-moonlight",
       },
+      pinnedGameIds: [],
     };
 
     const runtimeFactory = (config: HostConfig) =>

@@ -5,6 +5,7 @@ import type {
   GuestStatusSnapshot,
   SessionEvent,
   SimulationUpdateRequest,
+  StreamProbeRequest,
 } from "@game-vm-hub/shared-types";
 import { ConfigStore, defaultHostConfig } from "./config-store.js";
 import {
@@ -108,14 +109,50 @@ export class AppState {
     return this.controller.guestConnection.updateSimulation(request);
   }
 
+  async probeStreamHost(request: StreamProbeRequest) {
+    await this.ensureReady();
+    return this.controller.guestConnection.probeStreamHost(request);
+  }
+
   async terminateSession(sessionId: string) {
     await this.ensureReady();
     return this.controller.guestConnection.terminateSession(sessionId);
   }
 
+  async recoverSession() {
+    await this.ensureReady();
+
+    const currentSnapshot = this.snapshot();
+    const activeSession = currentSnapshot.sessions.find(
+      (session) =>
+        session.id === currentSnapshot.status.activeSessionId &&
+        (session.runtimeState === "launching" || session.runtimeState === "running"),
+    );
+    const failedSession = currentSnapshot.sessions.find(
+      (session) => session.runtimeState === "failed",
+    );
+    const candidate = activeSession ?? failedSession;
+
+    if (!candidate) {
+      throw new Error("No stalled or failed session is available for recovery.");
+    }
+
+    if (activeSession) {
+      await this.controller.guestConnection.terminateSession(activeSession.id);
+    }
+
+    await this.controller.runtimeProvider.prepare();
+    return this.controller.guestConnection.launchGame(candidate.gameId);
+  }
+
   async attachDisplay() {
     await this.ensureReady();
     return this.controller.runtimeProvider.attachDisplay();
+  }
+
+  async detachDisplay() {
+    await this.ensureReady();
+    return this.controller.runtimeProvider.detachDisplay();
   }
 
   async diagnostics() {

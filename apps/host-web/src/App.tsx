@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useEffectEvent, useMemo, useState, startTransition } from "react";
+import { canLaunchGame } from "@game-vm-hub/catalog-core";
 import type {
   DashboardMessage,
   DashboardSnapshot,
@@ -13,9 +14,17 @@ import type {
   SimulationCatalog,
   SimulationGameProfile,
   SimulationOutcome,
+  StreamProbeResult,
 } from "@game-vm-hub/shared-types";
 
-type RuntimeAction = "start" | "stop" | "scan" | "recover";
+type RuntimeAction =
+  | "start"
+  | "stop"
+  | "scan"
+  | "recover"
+  | "recover-session"
+  | "attach-display"
+  | "detach-display";
 
 const emptySnapshot: DashboardSnapshot = {
   status: {
@@ -70,6 +79,96 @@ function formatTime(value?: string) {
   }).format(new Date(value));
 }
 
+function formatDurationMs(value?: number) {
+  if (value === undefined) {
+    return "n/a";
+  }
+
+  if (value < 1000) {
+    return `${value}ms`;
+  }
+
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
+function formatList(values?: Array<string | number>) {
+  return values && values.length > 0 ? values.join(", ") : "";
+}
+
+function parseStringList(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function parsePortList(value: string) {
+  return value
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
+}
+
+function formatMetadataList(value?: string) {
+  return value
+    ? value
+        .split(";")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+        .join(", ")
+    : "";
+}
+
+function hasObservedStreamProbeTargets(result: StreamProbeResult) {
+  return Boolean(result.processName) || result.listeningPorts.length > 0;
+}
+
+function streamProbeTargetsAlreadyConfigured(
+  profile: SimulationGameProfile,
+  result: StreamProbeResult,
+) {
+  if (!result.ok || !hasObservedStreamProbeTargets(result)) {
+    return false;
+  }
+
+  const configuredProcessNames = new Set(
+    (profile.streamProbeProcessNames ?? []).map((processName) =>
+      processName.trim().toLowerCase(),
+    ),
+  );
+  const configuredPorts = new Set(profile.streamProbePorts ?? []);
+  const processCovered =
+    !result.processName ||
+    configuredProcessNames.has(result.processName.trim().toLowerCase());
+  const portsCovered = result.listeningPorts.every((port) => configuredPorts.has(port));
+
+  return processCovered && portsCovered;
+}
+
+function sessionStateLabel(session: GameSession) {
+  if (session.runtimeState === "failed" && session.lastError) {
+    return "failed";
+  }
+
+  return session.runtimeState;
+}
+
+function sessionTone(session: GameSession) {
+  if (session.runtimeState === "failed") {
+    return "danger";
+  }
+
+  if (session.runtimeState === "running" || session.runtimeState === "launching") {
+    return "success";
+  }
+
+  if (session.runtimeState === "queued") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
 function statusTone(status: GuestStatusSnapshot) {
   if (status.agentState === "error" || status.scanState === "error") {
     return "danger";
@@ -84,6 +183,19 @@ function statusTone(status: GuestStatusSnapshot) {
   }
 
   return "neutral";
+}
+
+function eventStreamStateLabel(diagnostics: RuntimeDiagnostics) {
+  if (diagnostics.eventStreamState === "reconnecting") {
+    const attemptCount = diagnostics.eventStreamReconnectAttempts ?? 0;
+    return attemptCount > 0 ? `reconnecting (${attemptCount})` : "reconnecting";
+  }
+
+  if (diagnostics.eventStreamState) {
+    return diagnostics.eventStreamState;
+  }
+
+  return diagnostics.eventStreamConnected ? "connected" : "disconnected";
 }
 
 function deriveRecoveryState(
@@ -104,8 +216,10 @@ function deriveRecoveryState(
         latestSession.lastError ??
         diagnostics.lastSessionError ??
         "The Windows guest reported a failed launch before remote play became ready.",
-      action: diagnostics.guestAgentReachable ? ("recover" as const) : ("start" as const),
-      actionLabel: diagnostics.guestAgentReachable ? "Recover link" : "Start guest",
+      action: diagnostics.guestAgentReachable
+        ? ("recover-session" as const)
+        : ("start" as const),
+      actionLabel: diagnostics.guestAgentReachable ? "Relaunch game" : "Start guest",
     };
   }
 
@@ -121,6 +235,21 @@ function deriveRecoveryState(
   }
 
   if (!diagnostics.eventStreamConnected) {
+    if (diagnostics.eventStreamState === "reconnecting") {
+      const attemptCount = diagnostics.eventStreamReconnectAttempts ?? 0;
+
+      return {
+        tone: "warning" as const,
+        title: "Control link recovering",
+        detail:
+          attemptCount > 0
+            ? `The guest is still reachable and the host is retrying the event stream automatically. Current reconnect attempt: ${attemptCount}.`
+            : "The guest is still reachable and the host is retrying the event stream automatically.",
+        action: "recover" as const,
+        actionLabel: "Retry now",
+      };
+    }
+
     return {
       tone: "warning" as const,
       title: "Control link degraded",
@@ -131,7 +260,30 @@ function deriveRecoveryState(
     };
   }
 
-  if (status.streamHostState !== "ready") {
+  if (!diagnostics.activeSessionRunning) {
+    return {
+      tone: "warning" as const,
+      title: "No active play session",
+      detail:
+        "The guest control path is available, but no game session is currently running. Launch a game from the library before trying to attach remote play.",
+      action: null,
+      actionLabel: null,
+    };
+  }
+
+  if (diagnostics.remotePlayStalled) {
+    return {
+      tone: "danger" as const,
+      title: "Remote play stalled",
+      detail:
+        diagnostics.remotePlayStallDetail ??
+        "The active session has exceeded its expected stream-ready window. Retry the guest control link or relaunch if the stall persists.",
+      action: "recover-session" as const,
+      actionLabel: "Restart stalled launch",
+    };
+  }
+
+  if (!diagnostics.activeSessionStreamReady || status.streamHostState !== "ready") {
     return {
       tone: "warning" as const,
       title: "Remote play not ready",
@@ -142,11 +294,24 @@ function deriveRecoveryState(
     };
   }
 
+  if (!diagnostics.remoteClientAttached) {
+    return {
+      tone: "success" as const,
+      title: "Remote play ready to attach",
+      detail:
+        diagnostics.lastDisplayAttachDetail ??
+        "The stream path is ready, but no remote client is attached yet. Hand off to Moonlight or another client to begin play.",
+      action: "attach-display" as const,
+      actionLabel: "Attach display",
+    };
+  }
+
   return {
     tone: "success" as const,
-    title: "Remote play path ready",
+    title: "Remote client attached",
     detail:
-      "The guest is reachable, the event stream is connected, and the remote-play handoff is ready for Moonlight or another client.",
+      diagnostics.lastDisplayAttachDetail ??
+      "The guest is reachable, the event stream is connected, and a remote client is attached.",
     action: null,
     actionLabel: null,
   };
@@ -159,6 +324,7 @@ const defaultConfig: HostConfig = {
     guestAgentBaseUrl: "http://127.0.0.1:8765",
     streamMode: "sunshine-moonlight",
   },
+  pinnedGameIds: [],
 };
 
 const defaultDiagnostics: RuntimeDiagnostics = {
@@ -190,6 +356,7 @@ async function postJson<T>(path: string, body?: object): Promise<T> {
 }
 
 export function App() {
+  const bulkPinnedActionId = "__pinned-bulk__";
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(emptySnapshot);
   const [config, setConfig] = useState<HostConfig>(defaultConfig);
   const [search, setSearch] = useState("");
@@ -199,10 +366,16 @@ export function App() {
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [savingPinnedGameId, setSavingPinnedGameId] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics>(defaultDiagnostics);
   const [simulationCatalog, setSimulationCatalog] =
     useState<SimulationCatalog>(emptySimulationCatalog);
   const [savingSimulationGameId, setSavingSimulationGameId] = useState<string | null>(null);
+  const [probingSimulationGameId, setProbingSimulationGameId] = useState<string | null>(null);
+  const [streamProbeResultsByGameId, setStreamProbeResultsByGameId] = useState<
+    Record<string, StreamProbeResult>
+  >({});
+  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
 
   const deferredSearch = useDeferredValue(search);
 
@@ -339,6 +512,17 @@ export function App() {
     });
   }, [deferredSearch, launcherFilter, snapshot.games]);
 
+  useEffect(() => {
+    if (filteredGames.length === 0) {
+      setSelectedGameId(null);
+      return;
+    }
+
+    if (!selectedGameId || !filteredGames.some((game) => game.id === selectedGameId)) {
+      setSelectedGameId(filteredGames[0]!.id);
+    }
+  }, [filteredGames, selectedGameId]);
+
   const activeSession = snapshot.sessions.find(
     (session) =>
       session.id === snapshot.status.activeSessionId &&
@@ -396,6 +580,55 @@ export function App() {
   const activeSessionGame = activeSession ? gamesById.get(activeSession.gameId) : undefined;
   const latestSessionGame = latestSession ? gamesById.get(latestSession.gameId) : undefined;
   const launchContextGame = activeSessionGame ?? latestSessionGame;
+  const diagnosticsSessionGame = diagnostics.activeSessionId
+    ? snapshot.sessions.find((session) => session.id === diagnostics.activeSessionId)
+    : undefined;
+  const diagnosticsSessionTitle = diagnosticsSessionGame
+    ? gameTitlesById.get(diagnosticsSessionGame.gameId) ?? diagnosticsSessionGame.gameId
+    : "none";
+  const recentSessions = snapshot.sessions.slice(0, 6);
+  const launchChecksByGameId = useMemo(
+    () => new Map(snapshot.games.map((game) => [game.id, canLaunchGame(game, snapshot.status)])),
+    [snapshot.games, snapshot.status],
+  );
+  const simulationProfilesByGameId = useMemo(
+    () => new Map(simulationCatalog.games.map((profile) => [profile.gameId, profile])),
+    [simulationCatalog.games],
+  );
+  const selectedGame = selectedGameId ? gamesById.get(selectedGameId) : filteredGames[0];
+  const selectedLaunchCheck = selectedGame
+    ? launchChecksByGameId.get(selectedGame.id) ?? canLaunchGame(selectedGame, snapshot.status)
+    : null;
+  const selectedSimulationProfile = selectedGame
+    ? simulationProfilesByGameId.get(selectedGame.id)
+    : undefined;
+  const selectedStreamProbeResult = selectedGame
+    ? streamProbeResultsByGameId[selectedGame.id]
+    : undefined;
+  const selectedStreamProbeTargetsConfigured =
+    selectedSimulationProfile && selectedStreamProbeResult
+      ? streamProbeTargetsAlreadyConfigured(
+          selectedSimulationProfile,
+          selectedStreamProbeResult,
+        )
+      : false;
+  const pinnedEntries = useMemo(
+    () =>
+      config.pinnedGameIds.map((gameId) => {
+        const game = gamesById.get(gameId);
+
+        return {
+          gameId,
+          game,
+          launchCheck: game
+            ? launchChecksByGameId.get(game.id) ?? canLaunchGame(game, snapshot.status)
+            : null,
+          missing: !game,
+        };
+      }),
+    [config.pinnedGameIds, gamesById, launchChecksByGameId, snapshot.status],
+  );
+  const missingPinnedCount = pinnedEntries.filter((entry) => entry.missing).length;
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -406,6 +639,24 @@ export function App() {
         await postJson("/api/runtime/start");
       } else if (action === "recover") {
         await postJson("/api/runtime/recover");
+      } else if (action === "recover-session") {
+        await postJson("/api/runtime/recover-session");
+      } else if (action === "attach-display") {
+        const response = await postJson<{ ok: boolean; detail: string }>(
+          "/api/runtime/attach-display",
+        );
+
+        if (!response.ok) {
+          throw new Error(response.detail);
+        }
+      } else if (action === "detach-display") {
+        const response = await postJson<{ ok: boolean; detail: string }>(
+          "/api/runtime/detach-display",
+        );
+
+        if (!response.ok) {
+          throw new Error(response.detail);
+        }
       } else if (action === "stop") {
         await postJson("/api/runtime/stop", { force: true });
       } else {
@@ -474,6 +725,79 @@ export function App() {
     }
   }
 
+  async function updatePinnedGames(nextPinnedGameIds: string[], activeGameId: string) {
+    setSavingPinnedGameId(activeGameId);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/config", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          pinnedGameIds: nextPinnedGameIds,
+        } satisfies Partial<HostConfig>),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Pinned game update failed: ${response.status}`);
+      }
+
+      setConfig((await response.json()) as HostConfig);
+    } catch (error) {
+      setErrorMessage((error as Error).message);
+    } finally {
+      setSavingPinnedGameId(null);
+    }
+  }
+
+  async function togglePinnedGame(gameId: string) {
+    const isPinned = config.pinnedGameIds.includes(gameId);
+    const nextPinnedGameIds = isPinned
+      ? config.pinnedGameIds.filter((pinnedGameId) => pinnedGameId !== gameId)
+      : [...config.pinnedGameIds, gameId];
+
+    await updatePinnedGames(nextPinnedGameIds, gameId);
+  }
+
+  async function movePinnedGame(gameId: string, direction: -1 | 1) {
+    const currentIndex = config.pinnedGameIds.indexOf(gameId);
+
+    if (currentIndex === -1) {
+      return;
+    }
+
+    const nextIndex = currentIndex + direction;
+
+    if (nextIndex < 0 || nextIndex >= config.pinnedGameIds.length) {
+      return;
+    }
+
+    const nextPinnedGameIds = [...config.pinnedGameIds];
+    const [movedGameId] = nextPinnedGameIds.splice(currentIndex, 1);
+
+    if (!movedGameId) {
+      return;
+    }
+
+    nextPinnedGameIds.splice(nextIndex, 0, movedGameId);
+
+    await updatePinnedGames(nextPinnedGameIds, gameId);
+  }
+
+  async function clearMissingPinnedGames() {
+    if (missingPinnedCount === 0) {
+      return;
+    }
+
+    const nextPinnedGameIds = pinnedEntries
+      .filter((entry) => !entry.missing)
+      .map((entry) => entry.gameId);
+
+    await updatePinnedGames(nextPinnedGameIds, bulkPinnedActionId);
+  }
+
   function updateSimulationProfile(
     gameId: string,
     update: (profile: SimulationGameProfile) => SimulationGameProfile,
@@ -510,6 +834,46 @@ export function App() {
     }
   }
 
+  async function probeStreamHost(profile: SimulationGameProfile) {
+    setProbingSimulationGameId(profile.gameId);
+    setErrorMessage(null);
+
+    try {
+      const result = await postJson<StreamProbeResult>("/api/runtime/probe-stream-host", {
+        processNames: profile.streamProbeProcessNames,
+        ports: profile.streamProbePorts,
+        timeoutMs: Math.max(profile.streamReadyDelayMs, 1200),
+      });
+
+      setStreamProbeResultsByGameId((current) => ({
+        ...current,
+        [profile.gameId]: result,
+      }));
+    } catch (error) {
+      setErrorMessage((error as Error).message);
+    } finally {
+      setProbingSimulationGameId(null);
+    }
+  }
+
+  async function applyStreamProbeResult(
+    profile: SimulationGameProfile,
+    result: StreamProbeResult,
+  ) {
+    const nextProfile: SimulationGameProfile = { ...profile };
+
+    if (result.processName) {
+      nextProfile.streamProbeProcessNames = [result.processName];
+    }
+
+    if (result.listeningPorts.length > 0) {
+      nextProfile.streamProbePorts = result.listeningPorts;
+    }
+
+    updateSimulationProfile(profile.gameId, () => nextProfile);
+    await saveSimulationProfile(nextProfile);
+  }
+
   return (
     <main className="shell">
       <section className="hero">
@@ -541,7 +905,9 @@ export function App() {
               disabled={
                 busyAction !== null ||
                 (recoveryState.action === "recover" &&
-                  (!diagnostics.guestAgentReachable || Boolean(diagnostics.eventStreamConnected)))
+                  (!diagnostics.guestAgentReachable || Boolean(diagnostics.eventStreamConnected))) ||
+                (recoveryState.action === "attach-display" &&
+                  (!diagnostics.remotePlayReady || Boolean(diagnostics.remoteClientAttached)))
               }
               onClick={() => void runAction(recoveryState.action)}
             >
@@ -578,6 +944,22 @@ export function App() {
             </button>
             <button disabled={busyAction !== null} onClick={() => void runAction("scan")}>
               Scan catalog
+            </button>
+            <button
+              disabled={
+                busyAction !== null ||
+                !diagnostics.remotePlayReady ||
+                Boolean(diagnostics.remoteClientAttached)
+              }
+              onClick={() => void runAction("attach-display")}
+            >
+              Attach display
+            </button>
+            <button
+              disabled={busyAction !== null || !diagnostics.remoteClientAttached}
+              onClick={() => void runAction("detach-display")}
+            >
+              Detach display
             </button>
             <button disabled={busyAction !== null} onClick={() => void runAction("stop")}>
               Stop guest
@@ -625,11 +1007,23 @@ export function App() {
             </div>
             <div className="diagnostic-item">
               <span>Event stream</span>
-              <strong>{diagnostics.eventStreamConnected ? "connected" : "not connected"}</strong>
+              <strong>{eventStreamStateLabel(diagnostics)}</strong>
             </div>
             <div className="diagnostic-item">
               <span>Remote play</span>
               <strong>{diagnostics.remotePlayReady ? "ready" : "waiting"}</strong>
+            </div>
+            <div className="diagnostic-item">
+              <span>Readiness stall</span>
+              <strong>{diagnostics.remotePlayStalled ? "stalled" : "clear"}</strong>
+            </div>
+            <div className="diagnostic-item">
+              <span>Remote client</span>
+              <strong>{diagnostics.remoteClientAttached ? "attached" : "not attached"}</strong>
+            </div>
+            <div className="diagnostic-item">
+              <span>Active session</span>
+              <strong>{diagnostics.activeSessionRunning ? diagnosticsSessionTitle : "none"}</strong>
             </div>
             <div className="diagnostic-item">
               <span>Last failure</span>
@@ -739,9 +1133,322 @@ export function App() {
               </span>
             ) : null}
           </div>
+          {pinnedEntries.length > 0 ? (
+            <div className="pinned-games">
+              <div className="pinned-games-header">
+                <div className="session-history-header">
+                  <span>Pinned games</span>
+                  <strong>
+                    {pinnedEntries.length}
+                    {missingPinnedCount > 0 ? ` · ${missingPinnedCount} missing` : ""}
+                  </strong>
+                </div>
+                {missingPinnedCount > 0 ? (
+                  <button
+                    disabled={busyAction !== null || savingPinnedGameId === bulkPinnedActionId}
+                    onClick={() => void clearMissingPinnedGames()}
+                  >
+                    Clear missing pins
+                  </button>
+                ) : null}
+              </div>
+              <div className="pinned-games-grid">
+                {pinnedEntries.map((entry, index) => {
+                  if (!entry.game) {
+                    return (
+                      <div
+                        key={`pinned-${entry.gameId}`}
+                        className="pinned-game-card pinned-game-missing"
+                      >
+                        <div>
+                          <p className="game-title">{entry.gameId}</p>
+                          <p className="game-subtitle">Pinned game missing from current catalog scan</p>
+                          <p className="game-meta-line">
+                            Run a fresh scan or verify the guest launcher/library before removing
+                            this pin.
+                          </p>
+                        </div>
+                        <div className="session-history-actions pin-card-actions">
+                          <span className="chip">missing</span>
+                          <div className="pin-order-actions">
+                            <button
+                              disabled={busyAction !== null || savingPinnedGameId === entry.gameId || index === 0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void movePinnedGame(entry.gameId, -1);
+                              }}
+                            >
+                              Up
+                            </button>
+                            <button
+                              disabled={
+                                busyAction !== null ||
+                                savingPinnedGameId === entry.gameId ||
+                                index === pinnedEntries.length - 1
+                              }
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void movePinnedGame(entry.gameId, 1);
+                              }}
+                            >
+                              Down
+                            </button>
+                          </div>
+                          <button
+                            disabled={busyAction !== null || savingPinnedGameId === entry.gameId}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void togglePinnedGame(entry.gameId);
+                            }}
+                          >
+                            Unpin
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const game = entry.game;
+
+                  return (
+                    <div
+                      key={`pinned-${game.id}`}
+                      className={`pinned-game-card ${
+                        selectedGame?.id === game.id ? "game-card-selected" : ""
+                      }`}
+                      onClick={() => setSelectedGameId(game.id)}
+                    >
+                      <div>
+                        <p className="game-title">{game.title}</p>
+                        <p className="game-subtitle">
+                          {entry.launchCheck?.canLaunch ? "Ready to launch" : entry.launchCheck?.reason}
+                        </p>
+                      </div>
+                      <div className="session-history-actions pin-card-actions">
+                        <div className="pin-order-actions">
+                          <button
+                            disabled={busyAction !== null || savingPinnedGameId === game.id || index === 0}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void movePinnedGame(game.id, -1);
+                            }}
+                          >
+                            Up
+                          </button>
+                          <button
+                            disabled={
+                              busyAction !== null ||
+                              savingPinnedGameId === game.id ||
+                              index === pinnedEntries.length - 1
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void movePinnedGame(game.id, 1);
+                            }}
+                          >
+                            Down
+                          </button>
+                        </div>
+                        <button
+                          disabled={busyAction !== null || savingPinnedGameId === game.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void togglePinnedGame(game.id);
+                          }}
+                        >
+                          Unpin
+                        </button>
+                        <button
+                          disabled={busyAction !== null || !entry.launchCheck?.canLaunch}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void launchGame(game.id);
+                          }}
+                        >
+                          Quick launch
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+          {selectedGame ? (
+            <div className="selected-game-card">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-kicker">Selected Game</p>
+                  <h3>{selectedGame.title}</h3>
+                </div>
+                <span
+                  className={`badge ${
+                    selectedLaunchCheck?.canLaunch ? "launch-ready" : "launch-blocked"
+                  }`}
+                >
+                  {selectedLaunchCheck?.canLaunch ? "Launch ready" : "Launch blocked"}
+                </span>
+              </div>
+              <p className="game-subtitle">
+                {selectedGame.launcher} · {selectedGame.installState} ·{" "}
+                {discoverySourceLabel(selectedGame.guestMetadata.discoverySource)}
+              </p>
+              <p className="game-meta-line">
+                Strategy {launchStrategyLabel(selectedGame.guestMetadata.launchStrategy)}
+              </p>
+              {selectedGame.guestMetadata.installRoot ? (
+                <p className="game-path">{selectedGame.guestMetadata.installRoot}</p>
+              ) : null}
+              {selectedLaunchCheck && !selectedLaunchCheck.canLaunch ? (
+                <p className="selected-game-warning">{selectedLaunchCheck.reason}</p>
+              ) : (
+                <p className="selected-game-ready">
+                  Guest runtime conditions currently allow this launch.
+                </p>
+              )}
+              <div className="selected-game-grid">
+                <div>
+                  <span>Last launch detail</span>
+                  <strong>{selectedGame.guestMetadata.lastLaunchDetail ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span>Observed process</span>
+                  <strong>{selectedGame.guestMetadata.lastObservedProcessName ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span>Launch mode</span>
+                  <strong>{selectedGame.guestMetadata.lastLaunchMode ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span>Stream ready mode</span>
+                  <strong>{selectedGame.guestMetadata.lastStreamReadyMode ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span>Stream ready detail</span>
+                  <strong>{selectedGame.guestMetadata.lastStreamReadyDetail ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span>Stream host ports</span>
+                  <strong>{selectedGame.guestMetadata.lastStreamHostPorts ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span>Configured probe processes</span>
+                  <strong>
+                    {formatList(selectedSimulationProfile?.streamProbeProcessNames) ||
+                      formatMetadataList(selectedGame.guestMetadata.streamProbeProcessNames) ||
+                      "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span>Configured probe ports</span>
+                  <strong>
+                    {formatList(selectedSimulationProfile?.streamProbePorts) ||
+                      formatMetadataList(selectedGame.guestMetadata.streamProbePorts) ||
+                      "n/a"}
+                  </strong>
+                </div>
+                <div>
+                  <span>Last seen</span>
+                  <strong>{formatTime(selectedGame.lastSeenAt)}</strong>
+                </div>
+              </div>
+              {selectedStreamProbeResult ? (
+                <div className="stream-probe-result">
+                  <p className={`game-meta-line ${selectedStreamProbeResult.ok ? "selected-game-ready" : "selected-game-warning"}`}>
+                    {selectedStreamProbeResult.detail}
+                  </p>
+                  {selectedStreamProbeResult.ok ? (
+                    <p className="game-meta-line">
+                      Observed{" "}
+                      {selectedStreamProbeResult.processName
+                        ? `process ${selectedStreamProbeResult.processName}`
+                        : "no process name"}{" "}
+                      with ports {formatList(selectedStreamProbeResult.listeningPorts) || "none"}.
+                    </p>
+                  ) : null}
+                  {selectedSimulationProfile &&
+                  selectedStreamProbeResult.ok &&
+                  hasObservedStreamProbeTargets(selectedStreamProbeResult) ? (
+                    <p className="stream-probe-target-state">
+                      {selectedStreamProbeTargetsConfigured
+                        ? "Observed targets are already covered by this profile."
+                        : "Observed targets can be saved to this profile."}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="chip-row">
+                {selectedGame.compatibilityFlags.map((flag) => (
+                  <span key={flag} className="chip">
+                    {flag}
+                  </span>
+                ))}
+                {selectedGame.guestMetadata.steamLibraryRoot ? (
+                  <span className="chip">library {selectedGame.guestMetadata.steamLibraryRoot}</span>
+                ) : null}
+              </div>
+              <div className="selected-game-actions">
+                <button
+                  disabled={busyAction !== null || savingPinnedGameId === selectedGame.id}
+                  onClick={() => void togglePinnedGame(selectedGame.id)}
+                >
+                  {config.pinnedGameIds.includes(selectedGame.id) ? "Unpin selected" : "Pin selected"}
+                </button>
+                {selectedSimulationProfile ? (
+                  <button
+                    disabled={
+                      busyAction !== null ||
+                      probingSimulationGameId === selectedSimulationProfile.gameId ||
+                      !diagnostics.guestAgentReachable
+                    }
+                    onClick={() => void probeStreamHost(selectedSimulationProfile)}
+                  >
+                    {probingSimulationGameId === selectedSimulationProfile.gameId
+                      ? "Testing..."
+                      : "Test selected Sunshine"}
+                  </button>
+                ) : null}
+                {selectedSimulationProfile && selectedStreamProbeResult?.ok ? (
+                  <button
+                    disabled={
+                      busyAction !== null ||
+                      savingSimulationGameId === selectedSimulationProfile.gameId ||
+                      selectedStreamProbeTargetsConfigured ||
+                      (!selectedStreamProbeResult.processName &&
+                        selectedStreamProbeResult.listeningPorts.length === 0)
+                    }
+                    onClick={() =>
+                      void applyStreamProbeResult(
+                        selectedSimulationProfile,
+                        selectedStreamProbeResult,
+                      )
+                    }
+                  >
+                    {selectedStreamProbeTargetsConfigured
+                      ? "Targets already saved"
+                      : "Use observed targets"}
+                  </button>
+                ) : null}
+                <button
+                  disabled={busyAction !== null || !selectedLaunchCheck?.canLaunch}
+                  onClick={() => void launchGame(selectedGame.id)}
+                >
+                  Launch selected
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="game-list">
-            {filteredGames.map((game) => (
-              <div key={game.id} className="game-card">
+            {filteredGames.map((game) => {
+              const launchCheck =
+                launchChecksByGameId.get(game.id) ?? canLaunchGame(game, snapshot.status);
+
+              return (
+              <div
+                key={game.id}
+                className={`game-card ${selectedGame?.id === game.id ? "game-card-selected" : ""}`}
+                onClick={() => setSelectedGameId(game.id)}
+              >
                 <div>
                   <p className="game-title">{game.title}</p>
                   <p className="game-subtitle">
@@ -752,6 +1459,9 @@ export function App() {
                   ) : null}
                   <p className="game-meta-line">
                     Launch path {launchStrategyLabel(game.guestMetadata.launchStrategy)}
+                  </p>
+                  <p className="game-meta-line">
+                    {launchCheck.canLaunch ? "Ready to launch" : launchCheck.reason}
                   </p>
                   {game.guestMetadata.lastLaunchDetail ? (
                     <p className="game-meta-line">{game.guestMetadata.lastLaunchDetail}</p>
@@ -772,14 +1482,26 @@ export function App() {
                     ) : null}
                   </div>
                   <button
-                    disabled={busyAction !== null}
-                    onClick={() => void launchGame(game.id)}
+                    disabled={busyAction !== null || savingPinnedGameId === game.id}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void togglePinnedGame(game.id);
+                    }}
+                  >
+                    {config.pinnedGameIds.includes(game.id) ? "Unpin" : "Pin"}
+                  </button>
+                  <button
+                    disabled={busyAction !== null || !launchCheck.canLaunch}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void launchGame(game.id);
+                    }}
                   >
                     Launch
                   </button>
                 </div>
               </div>
-            ))}
+            )})}
             {filteredGames.length === 0 ? <p className="empty-state">No games match the filter.</p> : null}
           </div>
         </article>
@@ -790,11 +1512,24 @@ export function App() {
               <p className="panel-kicker">Session</p>
               <h2>Launch Timeline</h2>
             </div>
-            {activeSession ? (
-              <button disabled={busyAction !== null} onClick={() => void terminateSession(activeSession.id)}>
-                Terminate
-              </button>
-            ) : null}
+            <div className="session-history-actions">
+              {diagnostics.remotePlayStalled ? (
+                <button
+                  disabled={busyAction !== null}
+                  onClick={() => void runAction("recover-session")}
+                >
+                  Restart launch
+                </button>
+              ) : null}
+              {activeSession ? (
+                <button
+                  disabled={busyAction !== null}
+                  onClick={() => void terminateSession(activeSession.id)}
+                >
+                  Terminate
+                </button>
+              ) : null}
+            </div>
           </div>
           <div className="session-summary">
             <div>
@@ -815,6 +1550,16 @@ export function App() {
             <strong>{config.managedVm.guestAgentBaseUrl}</strong>
             <span>Stream mode {config.managedVm.streamMode}</span>
             <span>Diagnostics guest {diagnostics.connectedGuestName ?? "unknown"}</span>
+            <span>Remote client {diagnostics.remoteClientAttached ? "attached" : "waiting"}</span>
+            <span>
+              Session age {formatDurationMs(diagnostics.activeSessionAgeMs)}
+            </span>
+            <span>
+              Expected ready {formatDurationMs(diagnostics.activeSessionExpectedReadyMs)}
+            </span>
+            <span>
+              Stall state {diagnostics.remotePlayStalled ? "stalled" : "clear"}
+            </span>
             <span>
               Launch path{" "}
               {launchContextGame
@@ -824,6 +1569,55 @@ export function App() {
             <span>
               Launch detail {launchContextGame?.guestMetadata.lastLaunchDetail ?? "n/a"}
             </span>
+            <span>
+              Display handoff {diagnostics.lastDisplayAttachDetail ?? "n/a"}
+            </span>
+          </div>
+          <div className="session-history">
+            <div className="session-history-header">
+              <span>Recent sessions</span>
+              <strong>{snapshot.sessions.length}</strong>
+            </div>
+            {recentSessions.map((session) => {
+              const sessionGame = gamesById.get(session.gameId);
+              const sessionTitle = sessionGame?.title ?? session.gameId;
+              const canRelaunch =
+                busyAction === null &&
+                !activeSession &&
+                snapshot.status.guestPowerState === "running" &&
+                snapshot.status.agentState === "ready" &&
+                sessionGame?.installState === "installed";
+
+              return (
+                <div key={session.id} className={`session-history-card tone-${sessionTone(session)}`}>
+                  <div>
+                    <p className="game-title">{sessionTitle}</p>
+                    <p className="game-subtitle">
+                      {sessionStateLabel(session)} · stream {session.streamState}
+                    </p>
+                    <p className="game-meta-line">
+                      Started {formatTime(session.startedAt)}
+                      {session.endedAt ? ` · ended ${formatTime(session.endedAt)}` : ""}
+                    </p>
+                    {session.lastError ? (
+                      <p className="session-error-line">{session.lastError}</p>
+                    ) : null}
+                  </div>
+                  <div className="session-history-actions">
+                    <span className="chip">{session.runtimeState}</span>
+                    <button
+                      disabled={!canRelaunch}
+                      onClick={() => void launchGame(session.gameId)}
+                    >
+                      Relaunch
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {recentSessions.length === 0 ? (
+              <p className="empty-state">No recent sessions yet.</p>
+            ) : null}
           </div>
           <div className="event-list">
             {snapshot.events.map((event: SessionEvent) => (
@@ -859,8 +1653,14 @@ export function App() {
               </p>
             ) : (
               <div className="simulation-list">
-                {simulationCatalog.games.map((profile) => (
-                  <div key={profile.gameId} className="simulation-card">
+                {simulationCatalog.games.map((profile) => {
+                  const streamProbeResult = streamProbeResultsByGameId[profile.gameId];
+                  const streamProbeTargetsConfigured = streamProbeResult
+                    ? streamProbeTargetsAlreadyConfigured(profile, streamProbeResult)
+                    : false;
+
+                  return (
+                    <div key={profile.gameId} className="simulation-card">
                     <div className="simulation-card-header">
                       <div>
                         <p className="game-title">
@@ -930,7 +1730,56 @@ export function App() {
                           }
                         />
                       </label>
+                      <label>
+                        Sunshine processes
+                        <input
+                          key={`${profile.gameId}-processes-${formatList(profile.streamProbeProcessNames)}`}
+                          defaultValue={formatList(profile.streamProbeProcessNames)}
+                          onBlur={(event) =>
+                            updateSimulationProfile(profile.gameId, (current) => ({
+                              ...current,
+                              streamProbeProcessNames: parseStringList(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Sunshine ports
+                        <input
+                          key={`${profile.gameId}-ports-${formatList(profile.streamProbePorts)}`}
+                          defaultValue={formatList(profile.streamProbePorts)}
+                          onBlur={(event) =>
+                            updateSimulationProfile(profile.gameId, (current) => ({
+                              ...current,
+                              streamProbePorts: parsePortList(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
                     </div>
+                    {streamProbeResult ? (
+                      <div className="stream-probe-result">
+                        <p className={`game-meta-line ${streamProbeResult.ok ? "selected-game-ready" : "selected-game-warning"}`}>
+                          {streamProbeResult.detail}
+                        </p>
+                        {streamProbeResult.ok ? (
+                          <p className="game-meta-line">
+                            Observed{" "}
+                            {streamProbeResult.processName
+                              ? `process ${streamProbeResult.processName}`
+                              : "no process name"}{" "}
+                            with ports {formatList(streamProbeResult.listeningPorts) || "none"}.
+                          </p>
+                        ) : null}
+                        {streamProbeResult.ok && hasObservedStreamProbeTargets(streamProbeResult) ? (
+                          <p className="stream-probe-target-state">
+                            {streamProbeTargetsConfigured
+                              ? "Observed targets are already covered by this profile."
+                              : "Observed targets can be saved to this profile."}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <label className="simulation-message">
                       Failure message
                       <input
@@ -950,9 +1799,36 @@ export function App() {
                       >
                         {savingSimulationGameId === profile.gameId ? "Saving..." : "Save scenario"}
                       </button>
+                      <button
+                        disabled={
+                          busyAction !== null ||
+                          probingSimulationGameId === profile.gameId ||
+                          !diagnostics.guestAgentReachable
+                        }
+                        onClick={() => void probeStreamHost(profile)}
+                      >
+                        {probingSimulationGameId === profile.gameId ? "Testing..." : "Test Sunshine"}
+                      </button>
+                      {streamProbeResult?.ok ? (
+                        <button
+                          disabled={
+                            busyAction !== null ||
+                            savingSimulationGameId === profile.gameId ||
+                            streamProbeTargetsConfigured ||
+                            (!streamProbeResult.processName &&
+                              streamProbeResult.listeningPorts.length === 0)
+                          }
+                          onClick={() => void applyStreamProbeResult(profile, streamProbeResult)}
+                        >
+                          {streamProbeTargetsConfigured
+                            ? "Targets already saved"
+                            : "Use observed targets"}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
                 {simulationCatalog.games.length === 0 ? (
                   <p className="empty-state">
                     No guest simulation profiles are available yet. Verify the guest scaffold is

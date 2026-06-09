@@ -11,6 +11,8 @@ import type {
   GuestAgentLaunchResponse,
   GuestAgentSimulationCatalogResponse,
   GuestAgentSimulationUpdateRequest,
+  GuestAgentStreamProbeRequest,
+  GuestAgentStreamProbeResponse,
   GuestAgentTerminateRequest,
   GuestConnection,
   GuestStatusSnapshot,
@@ -19,12 +21,15 @@ import type {
   RuntimeProvider,
   SessionEvent,
   SimulationCatalog,
+  StreamProbeRequest,
+  StreamProbeResult,
 } from "@game-vm-hub/shared-types";
 
 type EventListener = (event: SessionEvent, snapshot: DashboardSnapshot) => void;
 
 export interface ManagedVmControllerOptions {
   fetchImpl?: typeof fetch;
+  eventStreamReconnectDelayMs?: number;
 }
 
 function now(): string {
@@ -43,6 +48,15 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function parseDelay(value?: string): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 export class ManagedVmController {
   private readonly emitter = new EventEmitter();
   private readonly events: SessionEvent[] = [];
@@ -50,14 +64,22 @@ export class ManagedVmController {
   private readonly games: GameRecord[] = [];
   private readonly pendingSessionEvents = new Map<string, SessionEvent[]>();
   private readonly fetchImpl: typeof fetch;
+  private readonly eventStreamReconnectDelayMs: number;
   private eventStreamAbortController: AbortController | null = null;
+  private eventStreamConnectPromise: Promise<void> | null = null;
   private eventStreamTask: Promise<void> | null = null;
+  private eventStreamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private remoteEventsEnabled = false;
+  private eventStreamState: NonNullable<RuntimeDiagnostics["eventStreamState"]> =
+    "disconnected";
+  private eventStreamReconnectAttempts = 0;
   private lastGuestAgentError: string | null = null;
   private lastEventStreamError: string | null = null;
   private lastScanError: string | null = null;
   private lastSessionError: string | null = null;
+  private lastDisplayAttachDetail: string | null = null;
   private guestAgentReachable = false;
+  private remoteClientAttached = false;
   private status: GuestStatusSnapshot;
 
   readonly runtimeProvider: RuntimeProvider;
@@ -68,6 +90,7 @@ export class ManagedVmController {
     options: ManagedVmControllerOptions = {},
   ) {
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.eventStreamReconnectDelayMs = options.eventStreamReconnectDelayMs ?? 1500;
     this.status = this.createLocalStatus({
       guestPowerState: "offline",
       agentState: "offline",
@@ -82,6 +105,7 @@ export class ManagedVmController {
       startGuest: async () => this.startGuest(),
       stopGuest: async () => this.stopGuest(),
       attachDisplay: async () => this.attachDisplay(),
+      detachDisplay: async () => this.detachDisplay(),
       getDiagnostics: async () => this.getDiagnostics(),
     };
 
@@ -91,6 +115,7 @@ export class ManagedVmController {
       listGames: async () => this.listGames(),
       getSimulationCatalog: async () => this.getSimulationCatalog(),
       updateSimulation: async (request) => this.updateSimulation(request),
+      probeStreamHost: async (request) => this.probeStreamHost(request),
       launchGame: async (gameId) => this.launchGame(gameId),
       terminateSession: async (sessionId) => this.terminateSession(sessionId),
     };
@@ -152,6 +177,9 @@ export class ManagedVmController {
     } catch (error) {
       const detail = toErrorMessage(error);
       this.guestAgentReachable = false;
+      this.clearScheduledEventStreamReconnect();
+      this.eventStreamState = "disconnected";
+      this.eventStreamReconnectAttempts = 0;
       this.lastGuestAgentError = detail;
       this.status = this.createLocalStatus(
         {
@@ -175,7 +203,12 @@ export class ManagedVmController {
   }
 
   async stopGuest(): Promise<GuestStatusSnapshot> {
+    this.clearScheduledEventStreamReconnect();
     this.stopEventStream();
+    this.eventStreamState = "disconnected";
+    this.eventStreamReconnectAttempts = 0;
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail = "Remote display handoff cleared because the guest stopped.";
     this.pushEvent(
       "guest.disconnected",
       "Managed VM stop was requested, but VM power orchestration is not implemented yet.",
@@ -184,27 +217,123 @@ export class ManagedVmController {
   }
 
   async attachDisplay(): Promise<{ ok: boolean; detail: string }> {
-    if (this.status.streamHostState !== "ready") {
+    const activeSession = this.sessions.find(
+      (session) =>
+        session.id === this.status.activeSessionId &&
+        (session.runtimeState === "launching" || session.runtimeState === "running"),
+    );
+
+    if (!activeSession || activeSession.streamState !== "ready") {
+      this.remoteClientAttached = false;
+      this.lastDisplayAttachDetail =
+        "No stream-ready active session is available for remote display attachment.";
+      this.pushEvent("display.attach.failed", this.lastDisplayAttachDetail, "error");
+
       return {
         ok: false,
-        detail: "Guest stream path is not ready yet.",
+        detail: this.lastDisplayAttachDetail,
       };
     }
 
+    this.remoteClientAttached = true;
+    this.lastDisplayAttachDetail =
+      "Remote play path is ready. Attach Moonlight or another client to begin play.";
+    this.pushEvent(
+      "display.attached",
+      this.lastDisplayAttachDetail,
+      "info",
+      this.status.activeSessionId ? { sessionId: this.status.activeSessionId } : {},
+    );
+
     return {
       ok: true,
-      detail: "The managed VM guest reported a ready stream path.",
+      detail: this.lastDisplayAttachDetail,
+    };
+  }
+
+  async detachDisplay(): Promise<{ ok: boolean; detail: string }> {
+    if (!this.remoteClientAttached) {
+      this.lastDisplayAttachDetail = "No remote client is currently attached.";
+      this.pushEvent("display.detach.failed", this.lastDisplayAttachDetail, "error");
+
+      return {
+        ok: false,
+        detail: this.lastDisplayAttachDetail,
+      };
+    }
+
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote client detached. The stream path stays ready for another attachment.";
+    this.pushEvent(
+      "display.detached",
+      this.lastDisplayAttachDetail,
+      "info",
+      this.status.activeSessionId ? { sessionId: this.status.activeSessionId } : {},
+    );
+
+    return {
+      ok: true,
+      detail: this.lastDisplayAttachDetail,
     };
   }
 
   async getDiagnostics(): Promise<RuntimeDiagnostics> {
+    const activeSession = this.sessions.find(
+      (session) =>
+        session.id === this.status.activeSessionId &&
+        (session.runtimeState === "launching" || session.runtimeState === "running"),
+    );
+    const activeSessionStreamReady = activeSession?.streamState === "ready";
+    const activeGame = activeSession
+      ? this.games.find((game) => game.id === activeSession.gameId)
+      : undefined;
+    const activeSessionAgeMs = activeSession
+      ? Math.max(0, Date.now() - Date.parse(activeSession.startedAt))
+      : undefined;
+    const expectedReadyFromMetadata = activeGame
+      ? [
+          parseDelay(activeGame.guestMetadata.launchAcceptedDelayMs),
+          parseDelay(activeGame.guestMetadata.gameDetectedDelayMs),
+          parseDelay(activeGame.guestMetadata.streamReadyDelayMs),
+        ].reduce<number>((total, next) => total + (next ?? 0), 0)
+      : 0;
+    const activeSessionExpectedReadyMs = activeSession
+      ? expectedReadyFromMetadata > 0
+        ? expectedReadyFromMetadata
+        : 15000
+      : undefined;
+    const remotePlayStalled = Boolean(
+      activeSession &&
+        !activeSessionStreamReady &&
+        activeSessionAgeMs !== undefined &&
+        activeSessionExpectedReadyMs !== undefined &&
+        activeSessionAgeMs > activeSessionExpectedReadyMs + 2000,
+    );
+
     const diagnostics: RuntimeDiagnostics = {
       warnings: [...this.status.warnings],
       sessionCount: this.sessions.length,
       guestAgentReachable: this.guestAgentReachable,
       eventStreamConnected: this.remoteEventsEnabled,
-      remotePlayReady: this.status.streamHostState === "ready",
+      eventStreamState: this.eventStreamState,
+      eventStreamReconnectAttempts: this.eventStreamReconnectAttempts,
+      remotePlayReady: activeSessionStreamReady,
+      remotePlayStalled,
+      remoteClientAttached: this.remoteClientAttached,
+      activeSessionRunning: Boolean(activeSession),
+      activeSessionStreamReady,
     };
+
+    if (activeSession) {
+      diagnostics.activeSessionId = activeSession.id;
+      if (activeSessionAgeMs !== undefined) {
+        diagnostics.activeSessionAgeMs = activeSessionAgeMs;
+      }
+      if (activeSessionExpectedReadyMs !== undefined) {
+        diagnostics.activeSessionExpectedReadyMs = activeSessionExpectedReadyMs;
+      }
+    }
 
     if (this.status.connectedGuestName) {
       diagnostics.connectedGuestName = this.status.connectedGuestName;
@@ -224,6 +353,17 @@ export class ManagedVmController {
 
     if (this.lastSessionError) {
       diagnostics.lastSessionError = this.lastSessionError;
+    }
+
+    if (this.lastDisplayAttachDetail) {
+      diagnostics.lastDisplayAttachDetail = this.lastDisplayAttachDetail;
+    }
+
+    if (remotePlayStalled) {
+      const waitedSeconds = ((activeSessionAgeMs ?? 0) / 1000).toFixed(1);
+      const expectedSeconds = ((activeSessionExpectedReadyMs ?? 0) / 1000).toFixed(1);
+      diagnostics.remotePlayStallDetail =
+        `The active session has been waiting ${waitedSeconds}s for stream readiness; expected readiness was around ${expectedSeconds}s.`;
     }
 
     return diagnostics;
@@ -296,6 +436,19 @@ export class ManagedVmController {
     );
   }
 
+  async probeStreamHost(request: StreamProbeRequest): Promise<StreamProbeResult> {
+    await this.ensureConnected();
+    return clone(
+      await this.fetchJson<GuestAgentStreamProbeResponse>("/stream-probe", {
+        method: "POST",
+        body: JSON.stringify(request satisfies GuestAgentStreamProbeRequest),
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+  }
+
   async launchGame(gameId: string): Promise<GuestAgentLaunchResponse> {
     await this.ensureConnected();
 
@@ -308,6 +461,9 @@ export class ManagedVmController {
     });
 
     this.upsertSession(response.session);
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote client must attach again after the new launch reaches stream readiness.";
     this.status = this.createLocalStatus({
       ...this.status,
       activeSessionId: response.session.id,
@@ -362,6 +518,9 @@ export class ManagedVmController {
     const session = (await response.json()) as GameSession;
     this.upsertSession(session);
     this.lastSessionError = session.lastError ?? null;
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote display handoff cleared because the guest session ended.";
 
     if (this.status.activeSessionId === session.id) {
       const nextStatus = {
@@ -407,55 +566,116 @@ export class ManagedVmController {
       return;
     }
 
+    if (this.eventStreamConnectPromise) {
+      await this.eventStreamConnectPromise;
+      return;
+    }
+
     const abortController = new AbortController();
     this.eventStreamAbortController = abortController;
+    this.eventStreamState =
+      this.eventStreamReconnectAttempts > 0 ? "reconnecting" : "connecting";
 
-    try {
-      const response = await this.fetch("/events", {
-        headers: {
-          accept: "text/event-stream",
-        },
-        signal: abortController.signal,
-      });
-
-      if (!response.body) {
-        throw new Error("Guest event stream returned no response body.");
-      }
-
-      this.remoteEventsEnabled = true;
-      this.lastEventStreamError = null;
-      this.eventStreamTask = this.consumeEventStream(response.body, abortController.signal)
-        .catch((error) => {
-          if (!abortController.signal.aborted) {
-            this.lastEventStreamError = toErrorMessage(error);
-            this.status = this.createLocalStatus(this.status, [
-              `Guest event stream disconnected: ${this.lastEventStreamError}`,
-            ]);
-          }
-        })
-        .finally(() => {
-          if (this.eventStreamAbortController === abortController) {
-            this.eventStreamAbortController = null;
-          }
-          this.eventStreamTask = null;
-          this.remoteEventsEnabled = false;
+    this.eventStreamConnectPromise = (async () => {
+      try {
+        const response = await this.fetch("/events", {
+          headers: {
+            accept: "text/event-stream",
+          },
+          signal: abortController.signal,
         });
-    } catch (error) {
-      this.eventStreamAbortController = null;
-      this.eventStreamTask = null;
-      this.remoteEventsEnabled = false;
-      this.lastEventStreamError = toErrorMessage(error);
-      this.status = this.createLocalStatus(this.status, [
-        `Guest event stream is unavailable: ${this.lastEventStreamError}`,
-      ]);
-    }
+
+        if (!response.body) {
+          throw new Error("Guest event stream returned no response body.");
+        }
+
+        this.remoteEventsEnabled = true;
+        this.eventStreamState = "connected";
+        this.eventStreamReconnectAttempts = 0;
+        this.lastEventStreamError = null;
+        this.clearScheduledEventStreamReconnect();
+        this.eventStreamTask = this.consumeEventStream(response.body, abortController.signal)
+          .catch((error) => {
+            if (!abortController.signal.aborted) {
+              this.handleEventStreamDisconnect(toErrorMessage(error));
+            }
+          })
+          .finally(() => {
+            if (this.eventStreamAbortController === abortController) {
+              this.eventStreamAbortController = null;
+            }
+            this.eventStreamTask = null;
+            this.remoteEventsEnabled = false;
+            if (!abortController.signal.aborted && this.eventStreamState === "connected") {
+              this.eventStreamState = "disconnected";
+            }
+          });
+      } catch (error) {
+        this.eventStreamAbortController = null;
+        this.eventStreamTask = null;
+        this.remoteEventsEnabled = false;
+        this.handleEventStreamUnavailable(toErrorMessage(error));
+      } finally {
+        this.eventStreamConnectPromise = null;
+      }
+    })();
+
+    await this.eventStreamConnectPromise;
   }
 
   private stopEventStream() {
     this.eventStreamAbortController?.abort();
     this.eventStreamAbortController = null;
+    this.eventStreamConnectPromise = null;
     this.eventStreamTask = null;
     this.remoteEventsEnabled = false;
+  }
+
+  private clearScheduledEventStreamReconnect() {
+    if (this.eventStreamReconnectTimer) {
+      clearTimeout(this.eventStreamReconnectTimer);
+      this.eventStreamReconnectTimer = null;
+    }
+  }
+
+  private handleEventStreamDisconnect(detail: string) {
+    this.lastEventStreamError = detail;
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote display handoff is no longer trusted because the guest event stream disconnected.";
+    this.status = this.createLocalStatus(this.status, [
+      `Guest event stream disconnected: ${this.lastEventStreamError}`,
+    ]);
+    this.scheduleEventStreamReconnect();
+  }
+
+  private handleEventStreamUnavailable(detail: string) {
+    this.lastEventStreamError = detail;
+    this.remoteClientAttached = false;
+    this.lastDisplayAttachDetail =
+      "Remote display handoff is unavailable because the guest event stream could not be opened.";
+    this.status = this.createLocalStatus(this.status, [
+      `Guest event stream is unavailable: ${this.lastEventStreamError}`,
+    ]);
+    this.scheduleEventStreamReconnect();
+  }
+
+  private scheduleEventStreamReconnect() {
+    if (!this.guestAgentReachable || this.status.guestPowerState !== "running") {
+      this.eventStreamState = "disconnected";
+      return;
+    }
+
+    if (this.eventStreamReconnectTimer) {
+      return;
+    }
+
+    this.eventStreamReconnectAttempts += 1;
+    this.eventStreamState = "reconnecting";
+    this.eventStreamReconnectTimer = setTimeout(() => {
+      this.eventStreamReconnectTimer = null;
+      void this.ensureEventStream();
+    }, this.eventStreamReconnectDelayMs);
   }
 
   private async consumeEventStream(
@@ -534,6 +754,10 @@ export class ManagedVmController {
 
     this.status = this.createLocalStatus(nextStatus);
 
+    if (nextStatus.streamHostState !== "ready") {
+      this.remoteClientAttached = false;
+    }
+
     this.applySessionEvent(envelope.event);
 
     this.appendEvent(envelope.event);
@@ -559,6 +783,11 @@ export class ManagedVmController {
   private applyRemoteHealth(response: GuestAgentHealthResponse) {
     this.guestAgentReachable = true;
     this.lastGuestAgentError = null;
+
+    if (response.status.streamHostState !== "ready") {
+      this.remoteClientAttached = false;
+    }
+
     this.status = this.createLocalStatus({
       ...clone(response.status),
       guestPowerState: "running",
@@ -603,6 +832,7 @@ export class ManagedVmController {
         session.runtimeState = "launching";
         session.guestState = "online";
         session.streamState = "preparing";
+        this.remoteClientAttached = false;
         break;
       case "session.game.detected":
         session.runtimeState = "running";
@@ -618,6 +848,9 @@ export class ManagedVmController {
         session.streamState = "unavailable";
         session.endedAt ??= event.createdAt;
         this.lastSessionError = session.lastError ?? null;
+        this.remoteClientAttached = false;
+        this.lastDisplayAttachDetail =
+          "Remote display handoff cleared because the guest session ended.";
         break;
       case "session.failed":
         session.runtimeState = "failed";
@@ -626,6 +859,9 @@ export class ManagedVmController {
         session.endedAt ??= event.createdAt;
         session.lastError = event.message;
         this.lastSessionError = event.message;
+        this.remoteClientAttached = false;
+        this.lastDisplayAttachDetail =
+          "Remote display handoff cleared because the guest reported a failed launch.";
         break;
       default:
         break;

@@ -1,7 +1,11 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
-import type { DashboardMessage, StreamProbeRequest } from "@game-vm-hub/shared-types";
+import type {
+  DashboardMessage,
+  SimulationUpdateRequest,
+  StreamProbeRequest,
+} from "@game-vm-hub/shared-types";
 import { AppState, createAppState } from "./state.js";
 
 interface LaunchSessionBody {
@@ -110,6 +114,40 @@ function normalizeProbeStreamBody(body: ProbeStreamBody | undefined): StreamProb
   return request;
 }
 
+function normalizeSimulationBody(
+  body: UpdateSimulationBody | undefined,
+): SimulationUpdateRequest {
+  const request: SimulationUpdateRequest = {
+    gameId: body?.gameId ?? "",
+  };
+  const processNames = normalizeProcessNames(body?.streamProbeProcessNames);
+  const ports = normalizePorts(body?.streamProbePorts);
+
+  if (body?.outcome !== undefined) {
+    request.outcome = body.outcome;
+  }
+  if (body?.failureMessage !== undefined) {
+    request.failureMessage = body.failureMessage;
+  }
+  if (body?.launchAcceptedDelayMs !== undefined) {
+    request.launchAcceptedDelayMs = body.launchAcceptedDelayMs;
+  }
+  if (body?.gameDetectedDelayMs !== undefined) {
+    request.gameDetectedDelayMs = body.gameDetectedDelayMs;
+  }
+  if (body?.streamReadyDelayMs !== undefined) {
+    request.streamReadyDelayMs = body.streamReadyDelayMs;
+  }
+  if (processNames !== undefined) {
+    request.streamProbeProcessNames = processNames;
+  }
+  if (ports !== undefined) {
+    request.streamProbePorts = ports;
+  }
+
+  return request;
+}
+
 export function buildApp(state: AppState = createAppState()) {
   const app = Fastify({
     logger: false,
@@ -152,7 +190,9 @@ export function buildApp(state: AppState = createAppState()) {
     state.updateConfig(request.body as UpdateConfigBody),
   );
   app.put("/api/simulation", async (request) =>
-    state.updateSimulation(request.body as UpdateSimulationBody),
+    state.updateSimulation(
+      normalizeSimulationBody(request.body as UpdateSimulationBody | undefined),
+    ),
   );
   app.post("/api/runtime/probe-stream-host", async (request) =>
     state.probeStreamHost(normalizeProbeStreamBody(request.body as ProbeStreamBody | undefined)),

@@ -296,9 +296,19 @@ The current working assumption is:
 - Verified after the host stream-probe normalization update:
   - `npm test` passed
   - `npm run build` passed
+- Aligned managed-VM simulation update normalization with direct stream-probe normalization:
+  - `apps/host-api/src/create-app.ts` now normalizes `streamProbeProcessNames` and `streamProbePorts` in `PUT /api/simulation` payloads before forwarding them to the runtime provider
+  - saved scenario process names now follow the same trim/drop-empty/case-insensitive-dedupe behavior as direct probe requests
+  - saved scenario ports now follow the same numeric-string coercion, valid-port filtering, and dedupe behavior as direct probe requests
+  - optional simulation update fields are still omitted when absent, preserving `exactOptionalPropertyTypes` compatibility
+  - `apps/host-api/src/create-app.test.ts` now verifies messy scenario probe targets are cleaned before reaching the managed guest-agent `/simulation` contract
+- Updated `README.md` so the current feature list says normalized probe target input applies to both one-off tests and saved scenarios.
+- Verified after the saved scenario probe-target normalization update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is normalized stream-probe target input at the host API boundary
+  - the latest slice is normalized saved scenario probe-target input at the host API boundary
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

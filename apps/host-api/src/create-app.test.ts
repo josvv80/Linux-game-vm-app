@@ -505,8 +505,8 @@ describe("host API", () => {
         outcome: "fail-before-stream-ready",
         failureMessage: "Portal failed before remote play became ready.",
         streamReadyDelayMs: 900,
-        streamProbeProcessNames: ["sunshine", "sunshine-service"],
-        streamProbePorts: [47984, 48010],
+        streamProbeProcessNames: [" sunshine ", "Sunshine", "", "sunshine-service"],
+        streamProbePorts: [47984, "47984", 48010, 0, 70000],
       },
     });
     expect(simulationUpdateResponse.statusCode).toBe(200);

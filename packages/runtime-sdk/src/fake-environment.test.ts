@@ -78,4 +78,27 @@ describe("FakeEnvironment", () => {
     expect(snapshot.status.activeSessionId).toBe(launch.session.id);
     expect(snapshot.events[0]?.type).toBe("display.detached");
   });
+
+  it("resets empty stream probe target updates back to fake defaults", async () => {
+    const environment = createFakeEnvironment({ stepDelayMs: 1 });
+
+    await environment.guestConnection.updateSimulation({
+      gameId: "steam:app-578080",
+      streamProbeProcessNames: ["sunshine-service"],
+      streamProbePorts: [48010],
+    });
+    const resetCatalog = await environment.guestConnection.updateSimulation({
+      gameId: "steam:app-578080",
+      streamProbeProcessNames: [],
+      streamProbePorts: [],
+    });
+
+    expect(resetCatalog.games).toContainEqual(
+      expect.objectContaining({
+        gameId: "steam:app-578080",
+        streamProbeProcessNames: ["sunshine", "Sunshine", "sunshine-tray"],
+        streamProbePorts: [47984, 47989, 47990, 48010],
+      }),
+    );
+  });
 });

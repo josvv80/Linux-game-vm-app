@@ -527,6 +527,17 @@ describe("host API", () => {
       ],
     });
 
+    const simulationResetResponse = await app.inject({
+      method: "PUT",
+      url: "/api/simulation",
+      payload: {
+        gameId: "steam:app-400",
+        streamProbeProcessNames: ["", " "],
+        streamProbePorts: [0, 70000],
+      },
+    });
+    expect(simulationResetResponse.statusCode).toBe(200);
+
     const streamProbeResponse = await app.inject({
       method: "POST",
       url: "/api/runtime/probe-stream-host",
@@ -562,6 +573,15 @@ describe("host API", () => {
           streamReadyDelayMs: 900,
           streamProbeProcessNames: ["sunshine", "sunshine-service"],
           streamProbePorts: [47984, 48010],
+        }),
+      },
+      {
+        path: "/simulation",
+        method: "PUT",
+        body: JSON.stringify({
+          gameId: "steam:app-400",
+          streamProbeProcessNames: [],
+          streamProbePorts: [],
         }),
       },
       {

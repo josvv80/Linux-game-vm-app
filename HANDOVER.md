@@ -315,9 +315,19 @@ The current working assumption is:
 - Verified after the saved scenario timing normalization update:
   - `npm test` passed
   - `npm run build` passed
+- Aligned empty saved stream-probe target handling across providers:
+  - `apps/host-api/src/create-app.ts` now preserves explicitly empty `streamProbeProcessNames` and `streamProbePorts` arrays for `PUT /api/simulation` while still omitting absent or invalid targets for direct one-off probe tests
+  - this lets operators intentionally reset saved scenario probe targets instead of being unable to clear a field after normalization
+  - `packages/runtime-sdk/src/fake-environment.ts` now treats empty saved probe target lists as a reset to the fake provider's default Sunshine process names and ports, matching the Windows agent's existing fallback behavior
+  - `packages/runtime-sdk/src/fake-environment.test.ts` now covers fake-provider reset behavior
+  - `apps/host-api/src/create-app.test.ts` now verifies empty saved scenario target lists are forwarded as empty arrays to the managed guest-agent `/simulation` contract
+- Updated `README.md` so the current feature list mentions resetting empty saved probe targets to provider defaults.
+- Verified after the saved probe-target reset update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is normalized saved scenario timing input at the host API boundary
+  - the latest slice is explicit saved scenario probe-target reset behavior
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

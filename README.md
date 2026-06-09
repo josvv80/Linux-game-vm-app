@@ -113,7 +113,7 @@ Today the project can already demonstrate:
 - pinned games can be reordered and missing pins can be cleared in bulk
 - guest-side success and failure simulation without code changes
 - configurable guest-side Sunshine probe process names and ports for stream-readiness experiments
-- direct Sunshine stream-host probe actions from the host UI without launching a game, including normalized probe target and timing input for both tests and saved scenarios, adding observed process/port targets back into the scenario config, and identifying when those targets are already covered
+- direct Sunshine stream-host probe actions from the host UI without launching a game, including normalized probe target and timing input for both tests and saved scenarios, adding observed process/port targets back into the scenario config, resetting empty saved target lists to provider defaults, and identifying when those targets are already covered
 - visibility into whether a game came from real Steam discovery or sample fallback data
 - guest launch-path details such as Steam handoff attempts and observed process metadata
 - guest stream-readiness details showing whether Sunshine was observed or the scaffold used simulated readiness

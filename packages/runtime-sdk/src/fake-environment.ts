@@ -71,6 +71,9 @@ function parseDelay(value?: string): number | null {
 
 type EventListener = (event: SessionEvent, snapshot: DashboardSnapshot) => void;
 
+const defaultStreamProbeProcessNames = ["sunshine", "Sunshine", "sunshine-tray"];
+const defaultStreamProbePorts = [47984, 47989, 47990, 48010];
+
 export class FakeEnvironment {
   private readonly emitter = new EventEmitter();
   private readonly stepDelayMs: number;
@@ -430,10 +433,16 @@ export class FakeEnvironment {
       profile.streamReadyDelayMs = request.streamReadyDelayMs;
     }
     if (request.streamProbeProcessNames !== undefined) {
-      profile.streamProbeProcessNames = [...request.streamProbeProcessNames];
+      profile.streamProbeProcessNames =
+        request.streamProbeProcessNames.length > 0
+          ? [...request.streamProbeProcessNames]
+          : [...defaultStreamProbeProcessNames];
     }
     if (request.streamProbePorts !== undefined) {
-      profile.streamProbePorts = [...request.streamProbePorts];
+      profile.streamProbePorts =
+        request.streamProbePorts.length > 0
+          ? [...request.streamProbePorts]
+          : [...defaultStreamProbePorts];
     }
 
     this.applySimulationProfiles(this.games);
@@ -585,8 +594,8 @@ export class FakeEnvironment {
         launchAcceptedDelayMs: 250,
         gameDetectedDelayMs: 350,
         streamReadyDelayMs: 500,
-        streamProbeProcessNames: ["sunshine", "Sunshine", "sunshine-tray"],
-        streamProbePorts: [47984, 47989, 47990, 48010],
+        streamProbeProcessNames: [...defaultStreamProbeProcessNames],
+        streamProbePorts: [...defaultStreamProbePorts],
       });
     }
   }

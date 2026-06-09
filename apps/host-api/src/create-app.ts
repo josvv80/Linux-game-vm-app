@@ -42,7 +42,7 @@ interface ProbeStreamBody {
   timeoutMs?: number;
 }
 
-function normalizeProcessNames(value: unknown): string[] | undefined {
+function normalizeProcessNames(value: unknown, preserveEmptyArray = false): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
@@ -64,10 +64,10 @@ function normalizeProcessNames(value: unknown): string[] | undefined {
     }
   }
 
-  return processNames.length > 0 ? processNames : undefined;
+  return processNames.length > 0 || preserveEmptyArray ? processNames : undefined;
 }
 
-function normalizePorts(value: unknown): number[] | undefined {
+function normalizePorts(value: unknown, preserveEmptyArray = false): number[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
@@ -84,7 +84,7 @@ function normalizePorts(value: unknown): number[] | undefined {
     }
   }
 
-  return ports.length > 0 ? ports : undefined;
+  return ports.length > 0 || preserveEmptyArray ? ports : undefined;
 }
 
 function normalizeTimeoutMs(value: unknown): number | undefined {
@@ -122,8 +122,8 @@ function normalizeSimulationBody(
   const request: SimulationUpdateRequest = {
     gameId: body?.gameId ?? "",
   };
-  const processNames = normalizeProcessNames(body?.streamProbeProcessNames);
-  const ports = normalizePorts(body?.streamProbePorts);
+  const processNames = normalizeProcessNames(body?.streamProbeProcessNames, true);
+  const ports = normalizePorts(body?.streamProbePorts, true);
   const launchAcceptedDelayMs = normalizeTimeoutMs(body?.launchAcceptedDelayMs);
   const gameDetectedDelayMs = normalizeTimeoutMs(body?.gameDetectedDelayMs);
   const streamReadyDelayMs = normalizeTimeoutMs(body?.streamReadyDelayMs);

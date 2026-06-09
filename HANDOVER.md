@@ -285,9 +285,20 @@ The current working assumption is:
 - Verified after the additive probe-target update:
   - `npm test` passed
   - `npm run build` passed
+- Hardened the host stream-probe API boundary:
+  - `apps/host-api/src/create-app.ts` now normalizes `POST /api/runtime/probe-stream-host` payloads before forwarding them to the runtime provider
+  - process names are trimmed, empty values are dropped, and case-insensitive duplicates are removed
+  - stream-probe ports are coerced from numeric strings when needed, constrained to valid TCP/UDP port values, and deduplicated
+  - timeout values are only forwarded when finite and non-negative
+  - normalized optional probe fields are omitted instead of being set to `undefined`, preserving the host API TypeScript `exactOptionalPropertyTypes` build contract
+  - `apps/host-api/src/create-app.test.ts` now verifies that messy probe input is cleaned before reaching the managed guest-agent `/stream-probe` contract
+- Updated `README.md` so the current feature list mentions normalized stream-probe target input.
+- Verified after the host stream-probe normalization update:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest user-facing slice is additive Sunshine probe target application in the selected-game and scenario panels
+  - the latest slice is normalized stream-probe target input at the host API boundary
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

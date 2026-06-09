@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
-import type { DashboardMessage } from "@game-vm-hub/shared-types";
+import type { DashboardMessage, StreamProbeRequest } from "@game-vm-hub/shared-types";
 import { AppState, createAppState } from "./state.js";
 
 interface LaunchSessionBody {
@@ -36,6 +36,78 @@ interface ProbeStreamBody {
   processNames?: string[];
   ports?: number[];
   timeoutMs?: number;
+}
+
+function normalizeProcessNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const processNames: string[] = [];
+
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+
+    const processName = item.trim();
+    const key = processName.toLowerCase();
+
+    if (processName.length > 0 && !seen.has(key)) {
+      processNames.push(processName);
+      seen.add(key);
+    }
+  }
+
+  return processNames.length > 0 ? processNames : undefined;
+}
+
+function normalizePorts(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const seen = new Set<number>();
+  const ports: number[] = [];
+
+  for (const item of value) {
+    const port = typeof item === "number" ? item : Number(item);
+
+    if (Number.isInteger(port) && port > 0 && port <= 65535 && !seen.has(port)) {
+      ports.push(port);
+      seen.add(port);
+    }
+  }
+
+  return ports.length > 0 ? ports : undefined;
+}
+
+function normalizeTimeoutMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+
+  return Math.round(value);
+}
+
+function normalizeProbeStreamBody(body: ProbeStreamBody | undefined): StreamProbeRequest {
+  const request: StreamProbeRequest = {};
+  const processNames = normalizeProcessNames(body?.processNames);
+  const ports = normalizePorts(body?.ports);
+  const timeoutMs = normalizeTimeoutMs(body?.timeoutMs);
+
+  if (processNames !== undefined) {
+    request.processNames = processNames;
+  }
+  if (ports !== undefined) {
+    request.ports = ports;
+  }
+  if (timeoutMs !== undefined) {
+    request.timeoutMs = timeoutMs;
+  }
+
+  return request;
 }
 
 export function buildApp(state: AppState = createAppState()) {
@@ -83,7 +155,7 @@ export function buildApp(state: AppState = createAppState()) {
     state.updateSimulation(request.body as UpdateSimulationBody),
   );
   app.post("/api/runtime/probe-stream-host", async (request) =>
-    state.probeStreamHost(request.body as ProbeStreamBody),
+    state.probeStreamHost(normalizeProbeStreamBody(request.body as ProbeStreamBody | undefined)),
   );
   app.post("/api/catalog/scan", async () => state.scanCatalog());
   app.post("/api/runtime/attach-display", async () => state.attachDisplay());

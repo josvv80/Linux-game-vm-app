@@ -527,9 +527,9 @@ describe("host API", () => {
       method: "POST",
       url: "/api/runtime/probe-stream-host",
       payload: {
-        processNames: ["sunshine", "sunshine-service"],
-        ports: [47984, 48010],
-        timeoutMs: 1200,
+        processNames: [" sunshine ", "Sunshine", "", "sunshine-service"],
+        ports: [47984, "47984", 48010, 0, 70000],
+        timeoutMs: 1200.4,
       },
     });
     expect(streamProbeResponse.statusCode).toBe(200);

@@ -374,9 +374,16 @@ The current working assumption is:
 - Verified after the persisted host config read normalization update:
   - `npm test` passed
   - `npm run build` passed
+- Consolidated host config normalization:
+  - `apps/host-api/src/config-store.ts` now exports `normalizeHostConfigPatch()`
+  - `apps/host-api/src/create-app.ts` now uses the shared config-store normalizer for `PUT /api/config` instead of keeping a duplicate route-local implementation
+  - this keeps API config writes and persisted config reads on the same normalization rules
+- Verified after consolidating host config normalization:
+  - `npm test` passed
+  - `npm run build` passed
 - Current workspace state at handoff:
   - this checkpoint includes the broader ongoing remote-play and Sunshine probe prototype changes
-  - the latest slice is normalized persisted host config reads
+  - the latest slice is shared host config normalization for reads and writes
   - resume tomorrow by checking whether the next step should be probe UX polish or deeper guest/runtime integration
 
 ### 2026-06-06

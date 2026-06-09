@@ -49,7 +49,7 @@ function normalizePinnedGameIds(value: unknown): string[] | undefined {
   return pinnedGameIds;
 }
 
-function normalizeConfigPatch(rawPatch: unknown): HostConfigPatch {
+export function normalizeHostConfigPatch(rawPatch: unknown): HostConfigPatch {
   if (!isRecord(rawPatch)) {
     return {};
   }
@@ -94,7 +94,7 @@ function normalizeConfigPatch(rawPatch: unknown): HostConfigPatch {
 }
 
 function mergeConfig(base: HostConfig, patch: unknown): HostConfig {
-  const normalizedPatch = normalizeConfigPatch(patch);
+  const normalizedPatch = normalizeHostConfigPatch(patch);
 
   return {
     runtimeProvider: normalizedPatch.runtimeProvider ?? base.runtimeProvider,

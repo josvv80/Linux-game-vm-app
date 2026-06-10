@@ -78,6 +78,25 @@ The current working assumption is:
 
 ### 2026-06-10
 
+- Reworked the host web UI around the old Windows launcher structure instead of the earlier crowded dashboard composition:
+  - `apps/host-web/src/App.tsx` now splits the app into a fullscreen `Browse` surface and a separate `Control` surface for runtime/admin tasks
+  - the browse surface now uses a WPF-inspired layout with hero backdrop art, centered selected-game presentation, a large poster rail, and a dedicated trailer panel
+  - keyboard and controller navigation now also support quick surface switching and trailer opening in addition to left/right browse, launch, and pin actions
+  - `apps/host-web/src/styles.css` now uses a darker blue/cyan launcher theme closer to the old Windows launcher rather than the earlier orange prototype styling
+- Added host-side metadata enrichment and settings for artwork, descriptions, and trailers:
+  - `packages/shared-types/src/index.ts` now includes metadata-provider config plus enriched catalog metadata fields for artwork, overview text, and trailers
+  - `apps/host-api/src/config-store.ts` now persists `metadataProviders.theGamesDbApiKey`
+  - `apps/host-api/src/create-app.ts` exposes `GET /api/catalog/metadata/:id`
+  - `apps/host-api/src/thegamesdb.ts` adds TheGamesDB lookups for overview, cover art, and hero art
+  - `apps/host-api/src/steam-store.ts` adds Steam store trailer lookups for Steam titles
+  - `apps/host-api/src/state.ts` now composes TheGamesDB art/overview with Steam trailer metadata behind one host API route
+  - `apps/host-web/src/App.tsx` now loads selected and nearby game metadata, uses TheGamesDB artwork where available, exposes a TheGamesDB API key field in settings, and plays Steam trailers inline or fullscreen when present
+- Updated `README.md` to document the split browse/control UI, TheGamesDB configuration, metadata route, and trailer support.
+- Verified after the browse/control split and metadata/trailer update:
+  - `npm run build --workspace @game-vm-hub/shared-types` passed
+  - `npm run build --workspace @game-vm-hub/host-api` passed
+  - `npm run test --workspace @game-vm-hub/host-api` passed
+  - `npm run build --workspace @game-vm-hub/host-web` passed
 - Added early real Ubisoft Connect discovery to the Windows guest scaffold:
   - `guest/windows-agent/UbisoftConnectScanner.cs` now scans Windows registry uninstall entries for Ubisoft-published installs and common Ubisoft Connect launcher data manifests
   - discovered Ubisoft records are normalized into `GameRecord` entries with stable `ubisoft-connect:*` ids, install metadata when available, launcher app ids when available, and candidate process names when install roots can be inspected

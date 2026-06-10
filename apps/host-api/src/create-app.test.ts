@@ -274,6 +274,9 @@ describe("host API", () => {
         streamMode: "sunshine-moonlight",
       },
       pinnedGameIds: [],
+      metadataProviders: {
+        theGamesDbApiKey: "",
+      },
     };
 
     const stream = createEventStream();
@@ -706,6 +709,9 @@ describe("host API", () => {
         streamMode: "sunshine-moonlight",
       },
       pinnedGameIds: [],
+      metadataProviders: {
+        theGamesDbApiKey: "",
+      },
     };
 
     let streamAvailable = false;
@@ -807,6 +813,9 @@ describe("host API", () => {
         streamMode: "sunshine-moonlight",
       },
       pinnedGameIds: [],
+      metadataProviders: {
+        theGamesDbApiKey: "",
+      },
     };
 
     let eventStreamRequestCount = 0;
@@ -892,6 +901,9 @@ describe("host API", () => {
         streamMode: "sunshine-moonlight",
       },
       pinnedGameIds: [],
+      metadataProviders: {
+        theGamesDbApiKey: "",
+      },
     };
 
     const runtimeFactory = (config: HostConfig) =>
@@ -1020,6 +1032,9 @@ describe("host API", () => {
         streamMode: "sunshine-moonlight",
       },
       pinnedGameIds: [],
+      metadataProviders: {
+        theGamesDbApiKey: "",
+      },
     };
 
     const calls: Array<{ path: string; method: string; body: string | null }> = [];
@@ -1202,6 +1217,9 @@ describe("host API", () => {
         streamMode: "sunshine-moonlight",
       },
       pinnedGameIds: [],
+      metadataProviders: {
+        theGamesDbApiKey: "",
+      },
     };
 
     const runtimeFactory = (config: HostConfig) =>

@@ -199,12 +199,27 @@ export interface HostConfig {
   runtimeProvider: RuntimeProviderId;
   managedVm: ManagedVmConfig;
   pinnedGameIds: string[];
+  metadataProviders: {
+    theGamesDbApiKey: string;
+  };
 }
 
 export interface HostConfigPatch {
   runtimeProvider?: RuntimeProviderId;
   managedVm?: Partial<ManagedVmConfig>;
   pinnedGameIds?: string[];
+  metadataProviders?: {
+    theGamesDbApiKey?: string;
+  };
+}
+
+export interface CatalogGameMetadata {
+  source: "thegamesdb" | "steam-store" | "composite";
+  matchedTitle?: string;
+  overview?: string;
+  coverArtRef?: string;
+  heroArtRef?: string;
+  trailerRef?: string;
 }
 
 export interface GuestAgentHealthResponse {

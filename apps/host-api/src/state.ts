@@ -1,4 +1,5 @@
 import type {
+  CatalogGameMetadata,
   DashboardSnapshot,
   HostConfig,
   HostConfigPatch,
@@ -13,6 +14,8 @@ import {
   type RuntimeController,
   type RuntimeControllerFactory,
 } from "./runtime-controller-factory.js";
+import { SteamStoreService } from "./steam-store.js";
+import { TheGamesDbService } from "./thegamesdb.js";
 
 export class AppState {
   private controller: RuntimeController;
@@ -20,14 +23,20 @@ export class AppState {
   private unsubscribeFromController: (() => void) | null = null;
   private readonly listeners = new Set<(event: SessionEvent, snapshot: DashboardSnapshot) => void>();
   private readonly ready: Promise<void>;
+  private readonly theGamesDbService: TheGamesDbService;
+  private readonly steamStoreService: SteamStoreService;
 
   constructor(
     private readonly configStore = new ConfigStore("data/host-config.json"),
     initialConfig: HostConfig = defaultHostConfig,
     private readonly runtimeControllerFactory: RuntimeControllerFactory = createRuntimeController,
+    theGamesDbService = new TheGamesDbService(),
+    steamStoreService = new SteamStoreService(),
   ) {
     this.config = initialConfig;
     this.controller = this.runtimeControllerFactory(initialConfig);
+    this.theGamesDbService = theGamesDbService;
+    this.steamStoreService = steamStoreService;
     this.bindController();
     this.ready = this.initialize();
   }
@@ -92,6 +101,50 @@ export class AppState {
   async getGame(gameId: string) {
     await this.ensureReady();
     return this.snapshot().games.find((game) => game.id === gameId) ?? null;
+  }
+
+  async getCatalogGameMetadata(gameId: string): Promise<CatalogGameMetadata | null> {
+    await this.ensureReady();
+
+    const game = this.snapshot().games.find((candidate) => candidate.id === gameId);
+
+    if (!game) {
+      return null;
+    }
+
+    const [providerMetadata, trailerRef] = await Promise.all([
+      this.theGamesDbService.getMetadata(game, this.config.metadataProviders.theGamesDbApiKey),
+      this.steamStoreService.getTrailerUrl(game),
+    ]);
+
+    if (!providerMetadata && !trailerRef) {
+      return null;
+    }
+
+    if (!providerMetadata) {
+      const metadata: CatalogGameMetadata = {
+        source: "steam-store",
+      };
+
+      if (trailerRef) {
+        metadata.trailerRef = trailerRef;
+      }
+
+      return metadata;
+    }
+
+    const metadata: CatalogGameMetadata = {
+      ...providerMetadata,
+      source: trailerRef ? "composite" : providerMetadata.source,
+    };
+
+    if (trailerRef) {
+      metadata.trailerRef = trailerRef;
+    } else if (providerMetadata.trailerRef) {
+      metadata.trailerRef = providerMetadata.trailerRef;
+    }
+
+    return metadata;
   }
 
   async createSession(gameId: string) {
@@ -168,6 +221,8 @@ export class AppState {
   async updateConfig(patch: HostConfigPatch) {
     await this.ensureReady();
     this.config = await this.configStore.write(patch);
+    this.theGamesDbService.clear();
+    this.steamStoreService.clear();
     this.setController(this.runtimeControllerFactory(this.config));
     return this.getConfig();
   }

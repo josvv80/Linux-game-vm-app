@@ -24,6 +24,9 @@ interface UpdateConfigBody {
     guestAgentBaseUrl?: string;
   };
   pinnedGameIds?: string[];
+  metadataProviders?: {
+    theGamesDbApiKey?: string;
+  };
 }
 
 interface UpdateSimulationBody {
@@ -173,6 +176,15 @@ export function buildApp(state: AppState = createAppState()) {
   app.get("/api/snapshot", async () => state.snapshot());
   app.get("/api/config", async () => state.getConfig());
   app.get("/api/catalog/games", async () => state.listGames());
+  app.get("/api/catalog/metadata/:id", async (request, reply) => {
+    const metadata = await state.getCatalogGameMetadata((request.params as { id: string }).id);
+
+    if (!metadata) {
+      return reply.code(204).send();
+    }
+
+    return metadata;
+  });
   app.get("/api/catalog/games/:id", async (request, reply) => {
     const game = await state.getGame((request.params as { id: string }).id);
 

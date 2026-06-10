@@ -10,6 +10,9 @@ export const defaultHostConfig: HostConfig = {
     streamMode: "sunshine-moonlight",
   },
   pinnedGameIds: [],
+  metadataProviders: {
+    theGamesDbApiKey: "",
+  },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -27,6 +30,14 @@ function normalizeText(value: unknown): string | undefined {
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeOptionalSecret(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  return value.trim();
 }
 
 function normalizePinnedGameIds(value: unknown): string[] | undefined {
@@ -90,6 +101,16 @@ export function normalizeHostConfigPatch(rawPatch: unknown): HostConfigPatch {
     patch.pinnedGameIds = pinnedGameIds;
   }
 
+  if (isRecord(rawPatch.metadataProviders)) {
+    const theGamesDbApiKey = normalizeOptionalSecret(rawPatch.metadataProviders.theGamesDbApiKey);
+
+    if (theGamesDbApiKey !== undefined) {
+      patch.metadataProviders = {
+        theGamesDbApiKey,
+      };
+    }
+  }
+
   return patch;
 }
 
@@ -103,6 +124,10 @@ function mergeConfig(base: HostConfig, patch: unknown): HostConfig {
       ...normalizedPatch.managedVm,
     },
     pinnedGameIds: normalizedPatch.pinnedGameIds ?? base.pinnedGameIds,
+    metadataProviders: {
+      ...base.metadataProviders,
+      ...normalizedPatch.metadataProviders,
+    },
   };
 }
 

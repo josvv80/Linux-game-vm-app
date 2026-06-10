@@ -46,6 +46,7 @@ The finished app is meant to provide:
 - launcher discovery, starting with Steam and early Ubisoft Connect support
 - runtime controls for starting, stopping, and recovering the Windows gaming environment
 - game launch controls from a Linux browser UI
+- fullscreen couch-friendly browsing with a separate control/settings surface
 - status tracking for launch, process detection, and stream readiness
 - explicit remote-client attachment and detachment after the stream path is ready
 - diagnostics for guest reachability, event-stream health, and remote-play readiness
@@ -72,10 +73,13 @@ It already includes:
   - a managed-VM path that talks to a guest-agent HTTP contract
 - `host-api` Fastify server with REST endpoints and WebSocket dashboard updates
 - `host-web` React/Vite dashboard for:
+  - a browse surface separated from control/settings
   - runtime controls
   - provider and guest configuration
   - game catalog browsing
-  - browse-first spotlight view with artwork-backed game cards
+  - fullscreen WPF-inspired spotlight view with artwork-backed game cards
+  - TheGamesDB-backed cover, hero, and overview enrichment when an API key is configured
+  - Steam trailer preview and fullscreen playback when Steam store metadata exposes a trailer
   - launch actions
   - diagnostics and recovery guidance
   - session timeline visibility
@@ -113,6 +117,10 @@ Today the project can already demonstrate:
 - recent session history with one-click relaunch for completed or failed sessions when the guest is ready again
 - selected-game detail view with explicit launch-readiness and blocked-launch reasons
 - controller-friendly browsing with large artwork cards, spotlighted selection, directional navigation, and direct launch from the browse surface
+- a separated control/settings section so runtime controls and diagnostics do not crowd the library
+- host-side TheGamesDB API key storage for artwork and description enrichment
+- selected-game metadata enrichment through TheGamesDB and Steam store metadata routes
+- Steam trailer preview and fullscreen playback from the browse surface
 - persistent pinned games for quick launch and faster repeat access
 - pinned games stay visible even when a later scan does not currently rediscover them
 - pinned games can be reordered and missing pins can be cleared in bulk
@@ -190,6 +198,8 @@ Useful host API routes:
 
 - `GET /api/status`
 - `GET /api/config`
+- `GET /api/snapshot`
+- `GET /api/catalog/metadata/:id`
 - `PUT /api/config`
 - `GET /api/diagnostics`
 - `POST /api/runtime/start`

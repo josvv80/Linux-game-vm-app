@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState, startTransition } from "react";
 import { canLaunchGame } from "@game-vm-hub/catalog-core";
 import type {
+  CatalogGameMetadata,
   DashboardMessage,
   DashboardSnapshot,
   GameRecord,
@@ -267,8 +268,20 @@ function getSteamArtSources(game: GameRecord, variant: "hero" | "poster") {
   ];
 }
 
-function getGameArtSources(game: GameRecord, variant: "hero" | "poster") {
+function getGameArtSources(
+  game: GameRecord,
+  variant: "hero" | "poster",
+  metadata?: CatalogGameMetadata | null,
+) {
   const sources: string[] = [];
+
+  if (variant === "hero" && metadata?.heroArtRef) {
+    sources.push(metadata.heroArtRef);
+  }
+
+  if (variant === "poster" && metadata?.coverArtRef) {
+    sources.push(metadata.coverArtRef);
+  }
 
   if (variant === "hero" && game.guestMetadata.heroArtRef) {
     sources.push(game.guestMetadata.heroArtRef);
@@ -278,6 +291,10 @@ function getGameArtSources(game: GameRecord, variant: "hero" | "poster") {
     sources.push(game.coverArtRef);
   }
 
+  if (variant === "hero" && metadata?.coverArtRef) {
+    sources.push(metadata.coverArtRef);
+  }
+
   if (game.launcher === "steam") {
     sources.push(...getSteamArtSources(game, variant));
   }
@@ -285,7 +302,11 @@ function getGameArtSources(game: GameRecord, variant: "hero" | "poster") {
   return [...new Set(sources.filter(Boolean))];
 }
 
-function gameDescription(game: GameRecord) {
+function gameDescription(game: GameRecord, metadata?: CatalogGameMetadata | null) {
+  if (metadata?.overview) {
+    return metadata.overview;
+  }
+
   switch (game.id) {
     case "steam:app-578080":
       return "Large-scale battle royale with Steam handoff support in the current prototype.";
@@ -330,12 +351,14 @@ function GameArtwork({
   game,
   variant,
   className,
+  metadata,
 }: {
   game: GameRecord;
   variant: "hero" | "poster";
   className: string;
+  metadata?: CatalogGameMetadata | null | undefined;
 }) {
-  const sources = getGameArtSources(game, variant);
+  const sources = getGameArtSources(game, variant, metadata);
   const sourceKey = sources.join("|");
   const [sourceIndex, setSourceIndex] = useState(0);
 
@@ -546,6 +569,9 @@ const defaultConfig: HostConfig = {
     streamMode: "sunshine-moonlight",
   },
   pinnedGameIds: [],
+  metadataProviders: {
+    theGamesDbApiKey: "",
+  },
 };
 
 const defaultDiagnostics: RuntimeDiagnostics = {
@@ -590,6 +616,7 @@ export function App() {
   const bulkPinnedActionId = "__pinned-bulk__";
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(emptySnapshot);
   const [config, setConfig] = useState<HostConfig>(defaultConfig);
+  const [activeSurface, setActiveSurface] = useState<"browse" | "control">("browse");
   const [search, setSearch] = useState("");
   const [launcherFilter, setLauncherFilter] = useState<LauncherId | "all">("all");
   const [busyAction, setBusyAction] = useState<RuntimeAction | "launch" | "terminate" | null>(
@@ -612,6 +639,12 @@ export function App() {
   >({});
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [eventFeedMode, setEventFeedMode] = useState<"websocket" | "polling">("websocket");
+  const [catalogMetadataByGameId, setCatalogMetadataByGameId] = useState<
+    Record<string, CatalogGameMetadata | null | undefined>
+  >({});
+  const [metadataErrorsByGameId, setMetadataErrorsByGameId] = useState<Record<string, string>>({});
+  const [metadataLoadingGameId, setMetadataLoadingGameId] = useState<string | null>(null);
+  const [trailerOverlayOpen, setTrailerOverlayOpen] = useState(false);
   const gamepadStateRef = useRef<Record<string, boolean>>({});
 
   const deferredSearch = useDeferredValue(search);
@@ -878,6 +911,7 @@ export function App() {
     [simulationCatalog.games],
   );
   const selectedGame = selectedGameId ? gamesById.get(selectedGameId) : filteredGames[0];
+  const selectedMetadata = selectedGame ? catalogMetadataByGameId[selectedGame.id] : undefined;
   const selectedLaunchCheck = selectedGame
     ? launchChecksByGameId.get(selectedGame.id) ?? canLaunchGame(selectedGame, snapshot.status)
     : null;
@@ -917,6 +951,102 @@ export function App() {
   const selectedGameIndex = selectedGame
     ? filteredGames.findIndex((game) => game.id === selectedGame.id)
     : -1;
+  const selectedTrailerRef = selectedMetadata?.trailerRef?.trim() || "";
+
+  useEffect(() => {
+    if (!selectedTrailerRef) {
+      setTrailerOverlayOpen(false);
+    }
+  }, [selectedTrailerRef]);
+
+  useEffect(() => {
+    setCatalogMetadataByGameId({});
+    setMetadataErrorsByGameId({});
+  }, [config.metadataProviders.theGamesDbApiKey]);
+
+  useEffect(() => {
+    const apiKey = config.metadataProviders.theGamesDbApiKey.trim();
+    const preloadGames = filteredGames
+      .slice(Math.max(0, selectedGameIndex), Math.max(0, selectedGameIndex) + 8)
+      .filter((game) => catalogMetadataByGameId[game.id] === undefined);
+
+    if (!selectedGame || (!apiKey && selectedGame.launcher !== "steam")) {
+      return;
+    }
+
+    const gamesToLoad = [selectedGame, ...preloadGames].filter(
+      (game, index, games) => games.findIndex((candidate) => candidate.id === game.id) === index,
+    );
+
+    if (gamesToLoad.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadCatalogMetadata(game: GameRecord) {
+      setMetadataLoadingGameId(game.id);
+
+      try {
+        const response = await fetch(`/api/catalog/metadata/${encodeURIComponent(game.id)}`);
+
+        if (response.status === 204) {
+          if (!cancelled) {
+            setCatalogMetadataByGameId((current) => ({
+              ...current,
+              [game.id]: null,
+            }));
+          }
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Metadata request failed: ${response.status}`);
+        }
+
+        const metadata = (await response.json()) as CatalogGameMetadata;
+
+        if (!cancelled) {
+          setCatalogMetadataByGameId((current) => ({
+            ...current,
+            [game.id]: metadata,
+          }));
+          setMetadataErrorsByGameId((current) => {
+            const next = { ...current };
+            delete next[game.id];
+            return next;
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setMetadataErrorsByGameId((current) => ({
+            ...current,
+            [game.id]: (error as Error).message,
+          }));
+          setCatalogMetadataByGameId((current) => ({
+            ...current,
+            [game.id]: null,
+          }));
+        }
+      } finally {
+        if (!cancelled) {
+          setMetadataLoadingGameId((current) => (current === game.id ? null : current));
+        }
+      }
+    }
+
+    void Promise.all(gamesToLoad.map((game) => loadCatalogMetadata(game)));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    catalogMetadataByGameId,
+    config.metadataProviders.theGamesDbApiKey,
+    filteredGames,
+    selectedGame,
+    selectedGameIndex,
+  ]);
 
   const moveSelectedGame = useEffectEvent((direction: -1 | 1) => {
     if (filteredGames.length === 0) {
@@ -971,6 +1101,18 @@ export function App() {
       if (event.key.toLowerCase() === "p") {
         event.preventDefault();
         pinSelectedGame();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        setActiveSurface((current) => (current === "browse" ? "control" : "browse"));
+        return;
+      }
+
+      if (event.key.toLowerCase() === "t" && selectedTrailerRef) {
+        event.preventDefault();
+        setTrailerOverlayOpen((current) => !current);
       }
     }
 
@@ -979,7 +1121,7 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [launchSelectedGame, moveSelectedGame, pinSelectedGame]);
+  }, [launchSelectedGame, moveSelectedGame, pinSelectedGame, selectedTrailerRef]);
 
   useEffect(() => {
     let frameId = 0;
@@ -1021,6 +1163,16 @@ export function App() {
             Boolean(gamepad.buttons[3]?.pressed),
             () => pinSelectedGame(),
           );
+          updatePressedState(
+            "surface",
+            Boolean(gamepad.buttons[9]?.pressed),
+            () => setActiveSurface((current) => (current === "browse" ? "control" : "browse")),
+          );
+          updatePressedState(
+            "trailer",
+            Boolean(gamepad.buttons[2]?.pressed) && Boolean(selectedTrailerRef),
+            () => setTrailerOverlayOpen((current) => !current),
+          );
         } else {
           gamepadStateRef.current = {};
         }
@@ -1034,7 +1186,7 @@ export function App() {
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [launchSelectedGame, moveSelectedGame, pinSelectedGame]);
+  }, [launchSelectedGame, moveSelectedGame, pinSelectedGame, selectedTrailerRef]);
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -1126,7 +1278,7 @@ export function App() {
       const savedConfig = (await response.json()) as HostConfig;
       setConfig(savedConfig);
       setConfigSaveMessage(
-        `Config saved: ${savedConfig.runtimeProvider} using ${savedConfig.managedVm.vmName} at ${savedConfig.managedVm.guestAgentBaseUrl}.`,
+        `Config saved: ${savedConfig.runtimeProvider} using ${savedConfig.managedVm.vmName} at ${savedConfig.managedVm.guestAgentBaseUrl}. Metadata key ${savedConfig.metadataProviders.theGamesDbApiKey ? "configured" : "not set"}.`,
       );
       await refreshDiagnostics(false);
     } catch (error) {
@@ -1329,196 +1481,358 @@ export function App() {
   }
 
   return (
-    <main className="shell">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">Linux host control plane</p>
-          <h1>Game VM Hub</h1>
-          <p className="lede">
-            Prototype dashboard for launching Windows guest games from a Linux appliance-style
-            control surface.
-          </p>
+    <main className={`shell shell-${activeSurface}`}>
+      <header className="surface-nav">
+        <div className="surface-brand">
+          <p className="eyebrow">Game VM Hub</p>
+          <strong>{activeSurface === "browse" ? "Fullscreen library" : "Control and settings"}</strong>
         </div>
-        <div className={`status-card tone-${statusTone(snapshot.status)}`}>
-          <span>Guest power</span>
-          <strong>{snapshot.status.guestPowerState}</strong>
-          <span>Agent {snapshot.status.agentState}</span>
-          <span>Stream {snapshot.status.streamHostState}</span>
-        </div>
-      </section>
-
-      {recoveryState ? (
-        <section className={`recovery-banner tone-${recoveryState.tone}`}>
-          <div>
-            <p className="panel-kicker">Remote Play State</p>
-            <h2>{recoveryState.title}</h2>
-            <p>{recoveryState.detail}</p>
-          </div>
-          {recoveryState.action ? (
-            <button
-              disabled={
-                busyAction !== null ||
-                (recoveryState.action === "recover" &&
-                  (!diagnostics.guestAgentReachable || Boolean(diagnostics.eventStreamConnected))) ||
-                (recoveryState.action === "attach-display" &&
-                  (!diagnostics.remotePlayReady || Boolean(diagnostics.remoteClientAttached)))
-              }
-              onClick={() => void runAction(recoveryState.action)}
-            >
-              {recoveryState.actionLabel}
-            </button>
-          ) : (
-            <span className="recovery-ok">Moonlight-side launch path is clear.</span>
-          )}
-        </section>
-      ) : null}
-
-      <section className="browse-stage panel">
-        <div className="panel-header browse-stage-header">
-          <div>
-            <p className="panel-kicker">Browse</p>
-            <h2>Game Browser</h2>
-          </div>
-          <span className="badge">
-            {filteredGames.length} visible
-          </span>
-        </div>
-        <div className="toolbar browse-stage-toolbar">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search titles"
-          />
-          <select
-            value={launcherFilter}
-            onChange={(event) => setLauncherFilter(event.target.value as LauncherId | "all")}
+        <div className="surface-switch" role="tablist" aria-label="Primary sections">
+          <button
+            className={activeSurface === "browse" ? "surface-tab surface-tab-active" : "surface-tab"}
+            onClick={() => setActiveSurface("browse")}
+            role="tab"
+            type="button"
           >
-            <option value="all">All launchers</option>
-            <option value="steam">Steam</option>
-            <option value="ubisoft-connect">Ubisoft Connect</option>
-            <option value="manual">Manual</option>
-          </select>
+            Browse
+          </button>
+          <button
+            className={activeSurface === "control" ? "surface-tab surface-tab-active" : "surface-tab"}
+            onClick={() => setActiveSurface("control")}
+            role="tab"
+            type="button"
+          >
+            Control
+          </button>
         </div>
-        <div className="catalog-overview browse-stage-overview">
-          <span className="chip">
-            Real Steam {catalogInsights.realSteamCount}
-          </span>
-          <span className="chip">
-            Real Ubisoft {catalogInsights.realUbisoftCount}
-          </span>
-          <span className="chip">
-            Pinned {config.pinnedGameIds.length}
-          </span>
-          {catalogInsights.unknownCount > 0 ? (
-            <span className="chip">
-              Unknown {catalogInsights.unknownCount}
-            </span>
+      </header>
+
+      {activeSurface === "browse" ? (
+        <>
+          {recoveryState ? (
+            <section className={`recovery-banner tone-${recoveryState.tone}`}>
+              <div>
+                <p className="panel-kicker">Remote Play State</p>
+                <h2>{recoveryState.title}</h2>
+                <p>{recoveryState.detail}</p>
+              </div>
+              {recoveryState.action ? (
+                <button
+                  disabled={
+                    busyAction !== null ||
+                    (recoveryState.action === "recover" &&
+                      (!diagnostics.guestAgentReachable ||
+                        Boolean(diagnostics.eventStreamConnected))) ||
+                    (recoveryState.action === "attach-display" &&
+                      (!diagnostics.remotePlayReady || Boolean(diagnostics.remoteClientAttached)))
+                  }
+                  onClick={() => void runAction(recoveryState.action)}
+                >
+                  {recoveryState.actionLabel}
+                </button>
+              ) : (
+                <span className="recovery-ok">Moonlight-side launch path is clear.</span>
+              )}
+            </section>
           ) : null}
-        </div>
-        {selectedGame ? (
-          <div className="browse-spotlight">
-            <GameArtwork className="spotlight-art" game={selectedGame} variant="hero" />
-            <div className="spotlight-content">
-              <div className="chip-row spotlight-chips">
-                <span className="chip">{launcherLabel(selectedGame.launcher)}</span>
-                <span className="chip">{installStateLabel(selectedGame.installState)}</span>
-                <span className="chip">
-                  {discoverySourceLabel(selectedGame.guestMetadata.discoverySource)}
-                </span>
-              </div>
-              <h2 className="spotlight-title">{selectedGame.title}</h2>
-              <p className="spotlight-description">{gameDescription(selectedGame)}</p>
-              <p
-                className={`spotlight-status ${
-                  selectedLaunchCheck?.canLaunch ? "spotlight-status-ready" : "spotlight-status-blocked"
-                }`}
-              >
-                {gameStatusSummary(
-                  selectedGame,
-                  Boolean(selectedLaunchCheck?.canLaunch),
-                  selectedLaunchCheck?.reason,
-                )}
-              </p>
-              <div className="spotlight-meta">
+
+          <section className="browser-surface">
+            {selectedGame ? (
+              <GameArtwork
+                className="browser-backdrop-art"
+                game={selectedGame}
+                metadata={selectedMetadata}
+                variant="hero"
+              />
+            ) : null}
+            <div className="browser-backdrop-overlay" />
+            <div className="browser-layout">
+              <div className="browser-topbar">
                 <div>
-                  <span>Launch path</span>
-                  <strong>{launchStrategyLabel(selectedGame.guestMetadata.launchStrategy)}</strong>
+                  <p className="panel-kicker">Library</p>
+                  <h1 className="browser-headline">Your games</h1>
+                  <p className="browser-subtitle">
+                    {filteredGames.length} visible
+                    {config.pinnedGameIds.length > 0 ? ` · ${config.pinnedGameIds.length} pinned` : ""}
+                    {catalogInsights.realSteamCount > 0 || catalogInsights.realUbisoftCount > 0
+                      ? ` · ${catalogInsights.realSteamCount + catalogInsights.realUbisoftCount} real titles`
+                      : ""}
+                  </p>
                 </div>
-                <div>
-                  <span>Last seen</span>
-                  <strong>{formatTime(selectedGame.lastSeenAt)}</strong>
-                </div>
-                <div>
-                  <span>Launch mode</span>
-                  <strong>{selectedGame.guestMetadata.lastLaunchMode ?? "n/a"}</strong>
-                </div>
-                <div>
-                  <span>Observed process</span>
-                  <strong>{selectedGame.guestMetadata.lastObservedProcessName ?? "n/a"}</strong>
+                <div className={`status-card tone-${statusTone(snapshot.status)}`}>
+                  <span>Guest power</span>
+                  <strong>{snapshot.status.guestPowerState}</strong>
+                  <span>Agent {snapshot.status.agentState}</span>
+                  <span>Stream {snapshot.status.streamHostState}</span>
                 </div>
               </div>
-              <div className="spotlight-actions">
-                <button
-                  disabled={filteredGames.length < 2}
-                  onClick={() => moveSelectedGame(-1)}
+
+              <div className="browser-toolbar">
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search titles"
+                />
+                <select
+                  value={launcherFilter}
+                  onChange={(event) => setLauncherFilter(event.target.value as LauncherId | "all")}
                 >
-                  Previous
+                  <option value="all">All launchers</option>
+                  <option value="steam">Steam</option>
+                  <option value="ubisoft-connect">Ubisoft Connect</option>
+                  <option value="manual">Manual</option>
+                </select>
+                <button disabled={busyAction !== null} onClick={() => void runAction("scan")} type="button">
+                  Scan
                 </button>
-                <button
-                  disabled={filteredGames.length < 2}
-                  onClick={() => moveSelectedGame(1)}
-                >
-                  Next
+                <button disabled={busyAction !== null} onClick={() => setActiveSurface("control")} type="button">
+                  Settings
                 </button>
-                <button
-                  disabled={busyAction !== null || savingPinnedGameId === selectedGame.id}
-                  onClick={() => void togglePinnedGame(selectedGame.id)}
-                >
-                  {config.pinnedGameIds.includes(selectedGame.id) ? "Unpin" : "Pin"}
-                </button>
-                <button
-                  disabled={busyAction !== null || !selectedLaunchCheck?.canLaunch}
-                  onClick={() => void launchGame(selectedGame.id)}
-                >
-                  Launch
-                </button>
+              </div>
+
+              {selectedGame ? (
+                <div className="browser-focus-row">
+                  <div className="browser-focus">
+                    <div className="chip-row browser-focus-chips">
+                      <span className="chip">{launcherLabel(selectedGame.launcher)}</span>
+                      <span className="chip">{installStateLabel(selectedGame.installState)}</span>
+                      <span className="chip">
+                        {discoverySourceLabel(selectedGame.guestMetadata.discoverySource)}
+                      </span>
+                      {selectedMetadata?.matchedTitle &&
+                      selectedMetadata.matchedTitle !== selectedGame.title ? (
+                        <span className="chip">Matched {selectedMetadata.matchedTitle}</span>
+                      ) : null}
+                    </div>
+                    <h2 className="browser-selected-title">{selectedGame.title}</h2>
+                    <p className="browser-description">
+                      {gameDescription(selectedGame, selectedMetadata)}
+                    </p>
+                    <p
+                      className={`spotlight-status ${
+                        selectedLaunchCheck?.canLaunch
+                          ? "spotlight-status-ready"
+                          : "spotlight-status-blocked"
+                      }`}
+                    >
+                      {gameStatusSummary(
+                        selectedGame,
+                        Boolean(selectedLaunchCheck?.canLaunch),
+                        selectedLaunchCheck?.reason,
+                      )}
+                    </p>
+                    <div className="browser-focus-actions">
+                      <button
+                        disabled={filteredGames.length < 2}
+                        onClick={() => moveSelectedGame(-1)}
+                        type="button"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        disabled={filteredGames.length < 2}
+                        onClick={() => moveSelectedGame(1)}
+                        type="button"
+                      >
+                        Next
+                      </button>
+                      <button
+                        disabled={busyAction !== null || savingPinnedGameId === selectedGame.id}
+                        onClick={() => void togglePinnedGame(selectedGame.id)}
+                        type="button"
+                      >
+                        {config.pinnedGameIds.includes(selectedGame.id) ? "Unpin" : "Pin"}
+                      </button>
+                      <button
+                        disabled={busyAction !== null || !selectedTrailerRef}
+                        onClick={() => setTrailerOverlayOpen(true)}
+                        type="button"
+                      >
+                        Trailer
+                      </button>
+                      <button
+                        disabled={busyAction !== null || !selectedLaunchCheck?.canLaunch}
+                        onClick={() => void launchGame(selectedGame.id)}
+                        type="button"
+                      >
+                        Launch
+                      </button>
+                    </div>
+                    <div className="browser-focus-meta">
+                      <div>
+                        <span>Launch path</span>
+                        <strong>
+                          {launchStrategyLabel(selectedGame.guestMetadata.launchStrategy)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Last seen</span>
+                        <strong>{formatTime(selectedGame.lastSeenAt)}</strong>
+                      </div>
+                      <div>
+                        <span>Launch mode</span>
+                        <strong>{selectedGame.guestMetadata.lastLaunchMode ?? "n/a"}</strong>
+                      </div>
+                      <div>
+                        <span>Trailer</span>
+                        <strong>
+                          {selectedTrailerRef
+                            ? "Available"
+                            : metadataLoadingGameId === selectedGame.id
+                              ? "Loading"
+                              : "Not found"}
+                        </strong>
+                      </div>
+                    </div>
+                    {metadataErrorsByGameId[selectedGame.id] ? (
+                      <p className="game-meta-line selected-game-warning">
+                        Metadata fetch failed: {metadataErrorsByGameId[selectedGame.id]}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <aside className="browser-trailer-panel">
+                    <div className="browser-trailer-header">
+                      <span>Trailer</span>
+                      {selectedTrailerRef ? (
+                        <button onClick={() => setTrailerOverlayOpen(true)} type="button">
+                          Fullscreen
+                        </button>
+                      ) : null}
+                    </div>
+                    {selectedTrailerRef ? (
+                      <video
+                        key={selectedTrailerRef}
+                        className="browser-trailer-video"
+                        src={selectedTrailerRef}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        controls={false}
+                      />
+                    ) : (
+                      <div className="browser-trailer-empty">
+                        <strong>No trailer yet</strong>
+                        <span>
+                          {selectedGame.launcher === "steam"
+                            ? "Steam trailer metadata was not found for this title."
+                            : "Trailer support is wired for Steam first. Other launchers can be added next."}
+                        </span>
+                      </div>
+                    )}
+                  </aside>
+                </div>
+              ) : (
+                <p className="empty-state browse-empty-state">No games match the current filter.</p>
+              )}
+
+              <div className="browse-strip browser-rail" role="list" aria-label="Game browser">
+                {filteredGames.map((game) => {
+                  const launchCheck =
+                    launchChecksByGameId.get(game.id) ?? canLaunchGame(game, snapshot.status);
+
+                  return (
+                    <button
+                      key={game.id}
+                      className={`browse-card ${selectedGame?.id === game.id ? "browse-card-selected" : ""}`}
+                      onClick={() => setSelectedGameId(game.id)}
+                      type="button"
+                    >
+                      <GameArtwork
+                        className="browse-card-art"
+                        game={game}
+                        metadata={catalogMetadataByGameId[game.id]}
+                        variant="poster"
+                      />
+                      <div className="browse-card-body">
+                        <div>
+                          <p className="browse-card-title">{game.title}</p>
+                          <p className="browse-card-subtitle">
+                            {launcherLabel(game.launcher)} ·{" "}
+                            {discoverySourceLabel(game.guestMetadata.discoverySource)}
+                          </p>
+                        </div>
+                        <span
+                          className={`browse-card-state ${
+                            launchCheck.canLaunch ? "launch-ready" : "launch-blocked"
+                          }`}
+                        >
+                          {launchCheck.canLaunch ? "Ready" : "Blocked"}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-          </div>
-        ) : (
-          <p className="empty-state browse-empty-state">No games match the current filter.</p>
-        )}
-        <div className="browse-strip" role="list" aria-label="Game browser">
-          {filteredGames.map((game) => {
-            const launchCheck =
-              launchChecksByGameId.get(game.id) ?? canLaunchGame(game, snapshot.status);
+          </section>
 
-            return (
-              <button
-                key={game.id}
-                className={`browse-card ${selectedGame?.id === game.id ? "browse-card-selected" : ""}`}
-                onClick={() => setSelectedGameId(game.id)}
-                type="button"
-              >
-                <GameArtwork className="browse-card-art" game={game} variant="poster" />
-                <div className="browse-card-body">
-                  <div>
-                    <p className="browse-card-title">{game.title}</p>
-                    <p className="browse-card-subtitle">
-                      {launcherLabel(game.launcher)} · {discoverySourceLabel(game.guestMetadata.discoverySource)}
-                    </p>
-                  </div>
-                  <span className={`browse-card-state ${launchCheck.canLaunch ? "launch-ready" : "launch-blocked"}`}>
-                    {launchCheck.canLaunch ? "Ready" : "Blocked"}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </section>
+          {selectedTrailerRef && trailerOverlayOpen ? (
+            <div className="trailer-overlay" role="dialog" aria-modal="true">
+              <div className="trailer-overlay-header">
+                <strong>{selectedGame?.title}</strong>
+                <button onClick={() => setTrailerOverlayOpen(false)} type="button">
+                  Close trailer
+                </button>
+              </div>
+              <video
+                key={`${selectedTrailerRef}-fullscreen`}
+                className="trailer-overlay-video"
+                src={selectedTrailerRef}
+                autoPlay
+                controls
+                playsInline
+              />
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <section className="hero">
+            <div>
+              <p className="eyebrow">Linux host control plane</p>
+              <h1>Game VM Hub</h1>
+              <p className="lede">
+                Runtime controls, diagnostics, guest simulation and metadata provider settings.
+              </p>
+            </div>
+            <div className={`status-card tone-${statusTone(snapshot.status)}`}>
+              <span>Guest power</span>
+              <strong>{snapshot.status.guestPowerState}</strong>
+              <span>Agent {snapshot.status.agentState}</span>
+              <span>Stream {snapshot.status.streamHostState}</span>
+            </div>
+          </section>
 
-      <section className="grid">
+          {recoveryState ? (
+            <section className={`recovery-banner tone-${recoveryState.tone}`}>
+              <div>
+                <p className="panel-kicker">Remote Play State</p>
+                <h2>{recoveryState.title}</h2>
+                <p>{recoveryState.detail}</p>
+              </div>
+              {recoveryState.action ? (
+                <button
+                  disabled={
+                    busyAction !== null ||
+                    (recoveryState.action === "recover" &&
+                      (!diagnostics.guestAgentReachable ||
+                        Boolean(diagnostics.eventStreamConnected))) ||
+                    (recoveryState.action === "attach-display" &&
+                      (!diagnostics.remotePlayReady || Boolean(diagnostics.remoteClientAttached)))
+                  }
+                  onClick={() => void runAction(recoveryState.action)}
+                >
+                  {recoveryState.actionLabel}
+                </button>
+              ) : (
+                <span className="recovery-ok">Moonlight-side launch path is clear.</span>
+              )}
+            </section>
+          ) : null}
+
+          <section className="grid">
         <article className="panel">
           <div className="panel-header">
             <div>
@@ -1693,6 +2007,24 @@ export function App() {
                     managedVm: {
                       ...current.managedVm,
                       guestAgentBaseUrl: event.target.value,
+                    },
+                  }));
+                }}
+              />
+            </label>
+            <label>
+              TheGamesDB API key
+              <input
+                type="password"
+                value={config.metadataProviders.theGamesDbApiKey}
+                placeholder="Paste API key"
+                onChange={(event) => {
+                  setConfigSaveMessage(null);
+                  setConfig((current) => ({
+                    ...current,
+                    metadataProviders: {
+                      ...current.metadataProviders,
+                      theGamesDbApiKey: event.target.value,
                     },
                   }));
                 }}
@@ -2153,9 +2485,9 @@ export function App() {
         </article>
       </section>
 
-      {config.runtimeProvider === "managed-vm" ? (
-        <section className="simulation-section">
-          <article className="panel">
+          {config.runtimeProvider === "managed-vm" ? (
+            <section className="simulation-section">
+              <article className="panel">
             <div className="panel-header">
               <div>
                 <p className="panel-kicker">Guest Simulation</p>
@@ -2355,9 +2687,11 @@ export function App() {
                 ) : null}
               </div>
             )}
-          </article>
-        </section>
-      ) : null}
+              </article>
+            </section>
+          ) : null}
+        </>
+      )}
     </main>
   );
 }

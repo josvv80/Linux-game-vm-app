@@ -49,6 +49,10 @@ function discoverySourceLabel(source?: string) {
       return "real Steam";
     case "sample-steam":
       return "sample Steam";
+    case "ubisoft-registry":
+      return "real Ubisoft registry";
+    case "ubisoft-connect-manifest":
+      return "real Ubisoft manifest";
     case "sample-ubisoft":
       return "sample Ubisoft";
     default:
@@ -612,6 +616,7 @@ export function App() {
   const catalogInsights = useMemo(() => {
     const steamLibraryRoots = new Set<string>();
     let realSteamCount = 0;
+    let realUbisoftCount = 0;
     let sampleSteamCount = 0;
     let sampleUbisoftCount = 0;
     let unknownCount = 0;
@@ -632,6 +637,11 @@ export function App() {
         continue;
       }
 
+      if (source === "ubisoft-registry" || source === "ubisoft-connect-manifest") {
+        realUbisoftCount += 1;
+        continue;
+      }
+
       if (source === "sample-ubisoft") {
         sampleUbisoftCount += 1;
         continue;
@@ -642,6 +652,7 @@ export function App() {
 
     return {
       realSteamCount,
+      realUbisoftCount,
       sampleSteamCount,
       sampleUbisoftCount,
       unknownCount,
@@ -1117,6 +1128,15 @@ export function App() {
               <small>sample entries</small>
             </div>
             <div className="source-card">
+              <span>Ubisoft discovered</span>
+              <strong>
+                {catalogInsights.realUbisoftCount > 0
+                  ? `${catalogInsights.realUbisoftCount} real`
+                  : "no real titles"}
+              </strong>
+              <small>registry or manifest</small>
+            </div>
+            <div className="source-card">
               <span>Ubisoft fallback</span>
               <strong>{catalogInsights.sampleUbisoftCount}</strong>
               <small>sample entries</small>
@@ -1249,6 +1269,9 @@ export function App() {
             </span>
             <span className="chip">
               Sample Steam {catalogInsights.sampleSteamCount}
+            </span>
+            <span className="chip">
+              Real Ubisoft {catalogInsights.realUbisoftCount}
             </span>
             <span className="chip">
               Sample Ubisoft {catalogInsights.sampleUbisoftCount}

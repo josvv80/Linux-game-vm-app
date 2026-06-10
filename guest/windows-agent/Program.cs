@@ -83,7 +83,11 @@ internal sealed class GuestAgentState
         StreamHostState = "unavailable",
         ScanState = "idle",
         ConnectedGuestName = "Windows Gaming VM",
-        Warnings = BuildWarnings(steamDiscoveryCount: 0, usedSteamSampleFallback: true)
+        Warnings = BuildWarnings(
+            steamDiscoveryCount: 0,
+            usedSteamSampleFallback: true,
+            ubisoftDiscoveryCount: 0,
+            usedUbisoftSampleFallback: true)
     };
 
     public GuestAgentState()
@@ -140,7 +144,8 @@ internal sealed class GuestAgentState
         await Task.Delay(TimeSpan.FromMilliseconds(150), cancellationToken);
 
         var steamScan = SteamLibraryScanner.Scan();
-        var nextCatalog = CreateScanCatalog(steamScan);
+        var ubisoftScan = UbisoftConnectScanner.Scan();
+        var nextCatalog = CreateScanCatalog(steamScan, ubisoftScan);
 
         games.Clear();
         games.AddRange(nextCatalog);
@@ -150,7 +155,9 @@ internal sealed class GuestAgentState
         status.ScanState = "complete";
         status.Warnings = BuildWarnings(
             steamDiscoveryCount: steamScan.Games.Count,
-            usedSteamSampleFallback: steamScan.Games.Count == 0);
+            usedSteamSampleFallback: steamScan.Games.Count == 0,
+            ubisoftDiscoveryCount: ubisoftScan.Games.Count,
+            usedUbisoftSampleFallback: ubisoftScan.Games.Count == 0);
 
         Publish(new SessionEvent
         {
@@ -158,8 +165,8 @@ internal sealed class GuestAgentState
             Type = "guest.scan.completed",
             Level = "info",
             CreatedAt = UtcNow(),
-            Message = steamScan.Games.Count > 0
-                ? $"Guest launcher scan completed with {games.Count} games, including {steamScan.Games.Count} real Steam discoveries."
+            Message = steamScan.Games.Count > 0 || ubisoftScan.Games.Count > 0
+                ? $"Guest launcher scan completed with {games.Count} games, including {steamScan.Games.Count} real Steam discoveries and {ubisoftScan.Games.Count} real Ubisoft discoveries."
                 : $"Guest launcher scan completed with {games.Count} sample games."
         });
 
@@ -917,7 +924,9 @@ internal sealed class GuestAgentState
         await response.Body.FlushAsync(cancellationToken);
     }
 
-    private static List<GameRecord> CreateScanCatalog(SteamScanCatalog steamScan)
+    private static List<GameRecord> CreateScanCatalog(
+        SteamScanCatalog steamScan,
+        UbisoftScanCatalog ubisoftScan)
     {
         var catalog = new List<GameRecord>();
 
@@ -930,14 +939,25 @@ internal sealed class GuestAgentState
             catalog.AddRange(CreateSampleSteamGames());
         }
 
-        catalog.AddRange(CreateSampleUbisoftGames());
+        if (ubisoftScan.Games.Count > 0)
+        {
+            catalog.AddRange(ubisoftScan.Games.Select(CloneGame));
+        }
+        else
+        {
+            catalog.AddRange(CreateSampleUbisoftGames());
+        }
 
         return catalog
             .OrderBy(game => game.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static List<string> BuildWarnings(int steamDiscoveryCount, bool usedSteamSampleFallback)
+    private static List<string> BuildWarnings(
+        int steamDiscoveryCount,
+        bool usedSteamSampleFallback,
+        int ubisoftDiscoveryCount,
+        bool usedUbisoftSampleFallback)
     {
         var warnings = new List<string>();
 
@@ -950,7 +970,15 @@ internal sealed class GuestAgentState
             warnings.Add($"Steam discovery is active and found {steamDiscoveryCount} installed Steam title(s).");
         }
 
-        warnings.Add("Ubisoft Connect discovery is not implemented yet; sample Ubisoft data remains in the scaffold.");
+        if (usedUbisoftSampleFallback)
+        {
+            warnings.Add("Ubisoft Connect discovery found no Windows installs; sample Ubisoft data is being used.");
+        }
+        else
+        {
+            warnings.Add($"Ubisoft Connect discovery is active and found {ubisoftDiscoveryCount} installed Ubisoft title(s).");
+        }
+
         warnings.Add("Sunshine readiness is observed from the Windows guest when possible; delayed simulation remains the scaffold fallback.");
 
         return warnings;

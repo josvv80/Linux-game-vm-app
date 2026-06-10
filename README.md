@@ -43,7 +43,7 @@ The current preferred direction is a remote-first single-GPU passthrough setup:
 The finished app is meant to provide:
 
 - a unified game library across Windows launchers
-- launcher discovery, starting with Steam and later Ubisoft Connect
+- launcher discovery, starting with Steam and early Ubisoft Connect support
 - runtime controls for starting, stopping, and recovering the Windows gaming environment
 - game launch controls from a Linux browser UI
 - status tracking for launch, process detection, and stream readiness
@@ -84,6 +84,7 @@ It already includes:
   - Server-Sent Events lifecycle streaming
   - staged session state transitions
   - early Steam discovery
+  - early Ubisoft Connect discovery from Windows registry entries and launcher data manifests
   - early Steam launch handoff attempts
   - lightweight process observation with simulated fallback behavior
   - early Sunshine process/listener observation with simulated stream-ready fallback behavior
@@ -101,6 +102,7 @@ Today the project can already demonstrate:
 - managed guest health checks and event streaming
 - automatic managed-guest event-stream retry when the guest stays reachable but the control stream drops
 - catalog scanning
+- early real launcher discovery for Steam and Ubisoft Connect, with sample fallback data when no Windows installs are found
 - session launch and termination flows
 - remote-play and guest-link diagnostics in the UI
 - explicit event-stream state reporting so the UI distinguishes connected, reconnecting, and disconnected control-link conditions
@@ -115,7 +117,7 @@ Today the project can already demonstrate:
 - guest-side success and failure simulation without code changes
 - configurable guest-side Sunshine probe process names and ports for stream-readiness experiments
 - direct Sunshine stream-host probe actions from the host UI without launching a game, including checked-at/mode detail, normalized probe target and timing input for both tests and saved scenarios, adding observed process/port targets back into the scenario config, explicit reset controls and confirmations for saved target lists, resetting empty saved target lists to provider defaults, and identifying when those targets are already covered
-- visibility into whether a game came from real Steam discovery or sample fallback data
+- visibility into whether a game came from real Steam discovery, real Ubisoft discovery, or sample fallback data
 - guest launch-path details such as Steam handoff attempts and observed process metadata
 - guest stream-readiness details showing whether Sunshine was observed or the scaffold used simulated readiness
 
@@ -127,7 +129,7 @@ The major remaining gaps are:
 - real VFIO and single-GPU passthrough orchestration
 - production-grade Windows guest-agent behavior
 - complete Steam integration
-- Ubisoft Connect discovery and launch support
+- production-grade Ubisoft Connect discovery and launch support
 - explicit Sunshine/Moonlight readiness orchestration
 - stronger reconnect, failure, and recovery handling around the guest runtime
 

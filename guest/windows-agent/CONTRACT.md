@@ -14,6 +14,7 @@ The real Windows agent is not implemented yet, but the host-side contract is now
   - returns `GuestAgentGameListResponse`
   - current scaffold attempts real Steam `appmanifest_*.acf` discovery first and falls back to sample Steam data if no Windows Steam library is found
   - current Steam discovery also derives candidate game-process names from the install root for later launch observation
+  - current scaffold attempts early Ubisoft Connect discovery from Windows registry uninstall entries and launcher data manifests, then falls back to sample Ubisoft data if no installed Ubisoft title is found
 - `GET /games`
   - returns `GuestAgentGameListResponse`
 - `GET /simulation`
@@ -48,10 +49,11 @@ The real Windows agent is not implemented yet, but the host-side contract is now
 - a launch may still fail immediately if the guest cannot hand off the request to the real launcher process
 - when the guest can observe a matching Windows game process, `session.game.detected` now reflects that observed process instead of only a simulated delay
 - when the guest can observe Sunshine readiness, `session.streaming.ready` reflects the observed process/listener detail instead of only a simulated delay
+- Ubisoft Connect records discovered by the scaffold are currently catalog-only and continue through the simulated launch lifecycle until real Ubisoft launch handoff is implemented
 - launch failures may also arrive asynchronously through `GET /events` after an initially accepted launch response
 
 ## Current Host Assumptions
 
 - default guest base URL: `http://127.0.0.1:8765`
 - preferred display path: Sunshine in guest, Moonlight on host
-- first real launcher scope: Steam, then Ubisoft Connect
+- first real launcher scope: Steam, then deeper Ubisoft Connect launch integration

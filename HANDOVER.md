@@ -1,6 +1,6 @@
 # Game VM Hub Handover
 
-Last updated: 2026-06-08
+Last updated: 2026-06-10
 
 ## Goal
 
@@ -75,6 +75,25 @@ The current working assumption is:
   - decide whether successful probe results should eventually auto-persist or remain an explicit operator action
 
 ## Change Log
+
+### 2026-06-10
+
+- Added early real Ubisoft Connect discovery to the Windows guest scaffold:
+  - `guest/windows-agent/UbisoftConnectScanner.cs` now scans Windows registry uninstall entries for Ubisoft-published installs and common Ubisoft Connect launcher data manifests
+  - discovered Ubisoft records are normalized into `GameRecord` entries with stable `ubisoft-connect:*` ids, install metadata when available, launcher app ids when available, and candidate process names when install roots can be inspected
+  - Ubisoft records remain catalog-only for real integration and continue through the simulated launch lifecycle until a real Ubisoft launch handoff is implemented
+- Wired Ubisoft discovery into guest scans:
+  - `guest/windows-agent/Program.cs` now combines Steam and Ubisoft scan results
+  - sample Ubisoft data is only used when no installed Ubisoft titles are discovered
+  - scan-complete events and guest warnings now report real Ubisoft discovery counts separately from fallback data
+- Updated the dashboard source summaries:
+  - `apps/host-web/src/App.tsx` now labels `ubisoft-registry` and `ubisoft-connect-manifest` sources
+  - catalog overview and diagnostics now show real Ubisoft counts separately from sample Ubisoft fallback entries
+- Updated `README.md`, `guest/windows-agent/README.md`, and `guest/windows-agent/CONTRACT.md` to document early Ubisoft Connect discovery and the remaining lack of real Ubisoft launch execution.
+- Verified after the Ubisoft discovery update:
+  - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed with 0 warnings
+  - `npm test` passed
+  - `npm run build` passed
 
 ### 2026-06-08
 

@@ -8,7 +8,8 @@ Current scaffold behavior:
 - keeps in-memory guest status, catalog, sessions, and recent event history
 - scans real Steam library manifests when they are present on Windows
 - falls back to sample Steam data when no Windows Steam libraries are discovered
-- still serves sample Ubisoft data because Ubisoft Connect discovery is not implemented yet
+- scans early Ubisoft Connect install evidence from Windows registry uninstall entries and launcher data manifests
+- falls back to sample Ubisoft data when no Windows Ubisoft installs are discovered
 - attempts a real Steam handoff on Windows guests for Steam titles:
   - prefers `steam.exe -applaunch <appid>` when Steam can be resolved
   - falls back to `steam://run/<appid>` when only the Steam protocol path is available
@@ -39,8 +40,9 @@ What it does not do yet:
 
 - run as a Windows service
 - guarantee accurate per-title process detection for every Steam game shape
+- guarantee complete Ubisoft Connect metadata across every launcher cache shape
 - provide production-grade Sunshine/Moonlight readiness or client-attachment orchestration
-- scan real Ubisoft Connect installs
+- launch Ubisoft Connect games through the real launcher
 
 Local run command on a machine with .NET 10 installed:
 

@@ -99,6 +99,15 @@ The current working assumption is:
   - this lets the browser dashboard connect to `ws://localhost:5173/api/events` through Vite and reach the Fastify host API WebSocket route at `127.0.0.1:4000`
 - Verified after the WebSocket proxy fix:
   - `npm run build --workspace @game-vm-hub/host-web` passed
+- Hardened the dashboard against local WebSocket failures:
+  - `apps/host-api/src/create-app.ts` now exposes `GET /api/snapshot`
+  - `apps/host-web/src/App.tsx` now falls back to polling `/api/snapshot` every 3 seconds when `/api/events` cannot stay connected
+  - the diagnostics panel now reports whether the dashboard feed is on the live WebSocket path or HTTP polling fallback
+  - successful snapshot refreshes now clear the old WebSocket-only error banner so the UI can recover without manual state cleanup
+  - `apps/host-api/src/create-app.test.ts` now verifies the new HTTP snapshot route
+- Verified after the dashboard feed fallback update:
+  - `npm run test --workspace @game-vm-hub/host-api` passed
+  - `npm run build --workspace @game-vm-hub/host-web` passed
 
 ### 2026-06-08
 

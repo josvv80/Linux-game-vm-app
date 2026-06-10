@@ -402,6 +402,7 @@ const defaultDiagnostics: RuntimeDiagnostics = {
   warnings: [],
   sessionCount: 0,
 };
+const dashboardFeedErrorMessage = "WebSocket connection to the host API failed.";
 
 async function postJson<T>(path: string, body?: object): Promise<T> {
   const requestInit: RequestInit = {
@@ -451,12 +452,16 @@ export function App() {
     Record<string, string>
   >({});
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
+  const [eventFeedMode, setEventFeedMode] = useState<"websocket" | "polling">("websocket");
 
   const deferredSearch = useDeferredValue(search);
 
   const applySnapshot = useEffectEvent((nextSnapshot: DashboardSnapshot) => {
     startTransition(() => {
       setSnapshot(nextSnapshot);
+      setErrorMessage((current) =>
+        current === dashboardFeedErrorMessage ? null : current,
+      );
     });
   });
 
@@ -469,6 +474,22 @@ export function App() {
       startTransition(() => {
         setDiagnostics(nextDiagnostics);
       });
+    } catch (error) {
+      if (reportErrors) {
+        setErrorMessage((error as Error).message);
+      }
+    }
+  });
+
+  const refreshSnapshot = useEffectEvent(async (reportErrors = false) => {
+    try {
+      const response = await fetch("/api/snapshot");
+
+      if (!response.ok) {
+        throw new Error(`Snapshot request failed: ${response.status}`);
+      }
+
+      applySnapshot((await response.json()) as DashboardSnapshot);
     } catch (error) {
       if (reportErrors) {
         setErrorMessage((error as Error).message);
@@ -507,10 +528,8 @@ export function App() {
     let active = true;
 
     async function loadInitialState() {
-      const [status, games, sessions, diagnostics] = await Promise.all([
-        fetch("/api/status").then((response) => response.json()) as Promise<GuestStatusSnapshot>,
-        fetch("/api/catalog/games").then((response) => response.json()) as Promise<GameRecord[]>,
-        fetch("/api/sessions").then((response) => response.json()) as Promise<GameSession[]>,
+      const [nextSnapshot, diagnostics] = await Promise.all([
+        fetch("/api/snapshot").then((response) => response.json()) as Promise<DashboardSnapshot>,
         fetch("/api/diagnostics").then((response) => response.json()) as Promise<RuntimeDiagnostics>,
       ]);
       const nextConfig = (await fetch("/api/config").then((response) => response.json())) as HostConfig;
@@ -521,12 +540,7 @@ export function App() {
 
       setConfig(nextConfig);
       setDiagnostics(diagnostics);
-      setSnapshot((current) => ({
-        status,
-        games,
-        sessions,
-        events: current.events,
-      }));
+      applySnapshot(nextSnapshot);
     }
 
     void loadInitialState().catch((error: Error) => {
@@ -541,22 +555,48 @@ export function App() {
   }, [applySnapshot]);
 
   useEffect(() => {
+    let active = true;
+    let pollingIntervalId: number | null = null;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/api/events`);
 
     socket.onmessage = (message) => {
       const parsed = JSON.parse(message.data) as DashboardMessage;
+      setEventFeedMode("websocket");
       applySnapshot(parsed.payload);
     };
 
+    const startPollingFallback = () => {
+      if (!active) {
+        return;
+      }
+
+      setEventFeedMode("polling");
+      void refreshSnapshot(false);
+
+      if (pollingIntervalId === null) {
+        pollingIntervalId = window.setInterval(() => {
+          void refreshSnapshot(false);
+        }, 3000);
+      }
+    };
+
     socket.onerror = () => {
-      setErrorMessage("WebSocket connection to the host API failed.");
+      startPollingFallback();
+    };
+
+    socket.onclose = () => {
+      startPollingFallback();
     };
 
     return () => {
+      active = false;
+      if (pollingIntervalId !== null) {
+        window.clearInterval(pollingIntervalId);
+      }
       socket.close();
     };
-  }, [applySnapshot]);
+  }, [applySnapshot, refreshSnapshot]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1150,6 +1190,10 @@ export function App() {
             <div className="diagnostic-item">
               <span>Event stream</span>
               <strong>{eventStreamStateLabel(diagnostics)}</strong>
+            </div>
+            <div className="diagnostic-item">
+              <span>Dashboard feed</span>
+              <strong>{eventFeedMode === "websocket" ? "live websocket" : "HTTP polling"}</strong>
             </div>
             <div className="diagnostic-item">
               <span>Remote play</span>

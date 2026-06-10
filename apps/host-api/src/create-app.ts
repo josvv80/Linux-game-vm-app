@@ -170,6 +170,7 @@ export function buildApp(state: AppState = createAppState()) {
   }));
 
   app.get("/api/status", async () => state.status());
+  app.get("/api/snapshot", async () => state.snapshot());
   app.get("/api/config", async () => state.getConfig());
   app.get("/api/catalog/games", async () => state.listGames());
   app.get("/api/catalog/games/:id", async (request, reply) => {

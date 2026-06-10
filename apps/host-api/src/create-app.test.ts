@@ -109,6 +109,39 @@ describe("host API", () => {
     expect(response.json()).toHaveLength(2);
   });
 
+  it("returns a dashboard snapshot over HTTP", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
+    const app = buildApp(
+      new AppState(new ConfigStore(join(dir, "host-config.json")), defaultHostConfig),
+    );
+    apps.push(app);
+
+    await app.inject({
+      method: "POST",
+      url: "/api/runtime/start",
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/catalog/scan",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/snapshot",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: {
+        guestPowerState: "running",
+      },
+    });
+    expect(response.json().games).toHaveLength(2);
+    expect(Array.isArray(response.json().sessions)).toBe(true);
+    expect(Array.isArray(response.json().events)).toBe(true);
+  });
+
   it("persists provider config changes", async () => {
     const dir = await mkdtemp(join(tmpdir(), "game-vm-hub-test-"));
     const configPath = join(dir, "host-config.json");

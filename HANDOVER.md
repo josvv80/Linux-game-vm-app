@@ -94,6 +94,11 @@ The current working assumption is:
   - `env DOTNET_CLI_HOME=/tmp dotnet build guest/windows-agent/GameVmHub.WindowsAgent.csproj` passed with 0 warnings
   - `npm test` passed
   - `npm run build` passed
+- Fixed the local Vite dashboard WebSocket proxy:
+  - `apps/host-web/vite.config.ts` now configures `/api` as an explicit proxy target with `ws: true`
+  - this lets the browser dashboard connect to `ws://localhost:5173/api/events` through Vite and reach the Fastify host API WebSocket route at `127.0.0.1:4000`
+- Verified after the WebSocket proxy fix:
+  - `npm run build --workspace @game-vm-hub/host-web` passed
 
 ### 2026-06-08
 

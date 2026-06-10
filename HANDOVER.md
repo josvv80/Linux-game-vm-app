@@ -108,6 +108,12 @@ The current working assumption is:
 - Verified after the dashboard feed fallback update:
   - `npm run test --workspace @game-vm-hub/host-api` passed
   - `npm run build --workspace @game-vm-hub/host-web` passed
+- Fixed empty-body POST handling in the dashboard client:
+  - `apps/host-web/src/App.tsx` no longer sends `Content-Type: application/json` on bodyless POST requests like `POST /api/runtime/start`
+  - this avoids Fastify returning `400` before the route handler runs when the request has a JSON content type but no payload
+  - failed POST requests now also try to surface the backend `message` field instead of only showing a bare status code
+- Verified after the empty-body POST fix:
+  - `npm run build --workspace @game-vm-hub/host-web` passed
 
 ### 2026-06-08
 

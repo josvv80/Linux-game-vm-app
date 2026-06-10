@@ -407,12 +407,12 @@ const dashboardFeedErrorMessage = "WebSocket connection to the host API failed."
 async function postJson<T>(path: string, body?: object): Promise<T> {
   const requestInit: RequestInit = {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
   };
 
   if (body) {
+    requestInit.headers = {
+      "content-type": "application/json",
+    };
     requestInit.body = JSON.stringify(body);
   }
 
@@ -421,7 +421,16 @@ async function postJson<T>(path: string, body?: object): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    let detail = "";
+
+    try {
+      const errorBody = (await response.json()) as { message?: string };
+      detail = typeof errorBody.message === "string" ? errorBody.message : "";
+    } catch {
+      detail = "";
+    }
+
+    throw new Error(detail ? `${detail} (${response.status})` : `Request failed: ${response.status}`);
   }
 
   return response.json() as Promise<T>;

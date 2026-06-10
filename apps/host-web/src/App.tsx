@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useEffectEvent, useMemo, useState, startTransition } from "react";
+import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState, startTransition } from "react";
 import { canLaunchGame } from "@game-vm-hub/catalog-core";
 import type {
   DashboardMessage,
@@ -214,6 +214,156 @@ function describeStreamProbeTargets(profile: SimulationGameProfile) {
   return `Probe targets reset to provider defaults: processes ${
     formatList(profile.streamProbeProcessNames) || "none"
   }; ports ${formatList(profile.streamProbePorts) || "none"}.`;
+}
+
+function launcherLabel(launcher: LauncherId) {
+  switch (launcher) {
+    case "steam":
+      return "Steam";
+    case "ubisoft-connect":
+      return "Ubisoft Connect";
+    case "manual":
+      return "Manual";
+  }
+}
+
+function installStateLabel(state: GameRecord["installState"]) {
+  switch (state) {
+    case "installed":
+      return "Installed";
+    case "launcher-missing":
+      return "Launcher missing";
+    case "not-installed":
+      return "Not installed";
+  }
+}
+
+function gameInitials(title: string) {
+  return title
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function getSteamArtSources(game: GameRecord, variant: "hero" | "poster") {
+  const appId = game.guestMetadata.launcherAppId;
+
+  if (!appId) {
+    return [];
+  }
+
+  if (variant === "hero") {
+    return [
+      `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`,
+      `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${appId}/header.jpg`,
+    ];
+  }
+
+  return [
+    `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900_2x.jpg`,
+    `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${appId}/header.jpg`,
+  ];
+}
+
+function getGameArtSources(game: GameRecord, variant: "hero" | "poster") {
+  const sources: string[] = [];
+
+  if (variant === "hero" && game.guestMetadata.heroArtRef) {
+    sources.push(game.guestMetadata.heroArtRef);
+  }
+
+  if (game.coverArtRef) {
+    sources.push(game.coverArtRef);
+  }
+
+  if (game.launcher === "steam") {
+    sources.push(...getSteamArtSources(game, variant));
+  }
+
+  return [...new Set(sources.filter(Boolean))];
+}
+
+function gameDescription(game: GameRecord) {
+  switch (game.id) {
+    case "steam:app-578080":
+      return "Large-scale battle royale with Steam handoff support in the current prototype.";
+    case "ubisoft-connect:anno-1800":
+      return "City-building and trade management sample used to exercise the Ubisoft path and recovery flow.";
+  }
+
+  const source = game.guestMetadata.discoverySource;
+
+  if (game.launcher === "steam") {
+    return source === "steam-appmanifest"
+      ? "Discovered from your Windows Steam libraries and prepared for host-driven Steam launch handoff."
+      : "Steam title present in the prototype catalog for control-surface testing.";
+  }
+
+  if (game.launcher === "ubisoft-connect") {
+    return source === "ubisoft-registry" || source === "ubisoft-connect-manifest"
+      ? "Discovered from Ubisoft Connect install data in the Windows guest. Launch browsing is live; deeper Ubisoft launch execution is still scaffolded."
+      : "Ubisoft title present in the prototype catalog for controller-flow and recovery testing.";
+  }
+
+  return "Prototype game entry available to validate the host browse and launch surface.";
+}
+
+function gameStatusSummary(game: GameRecord, canLaunch: boolean, reason?: string) {
+  if (canLaunch) {
+    return "Ready to launch from the current guest state.";
+  }
+
+  return reason ?? `${launcherLabel(game.launcher)} launch is currently blocked.`;
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+}
+
+function GameArtwork({
+  game,
+  variant,
+  className,
+}: {
+  game: GameRecord;
+  variant: "hero" | "poster";
+  className: string;
+}) {
+  const sources = getGameArtSources(game, variant);
+  const sourceKey = sources.join("|");
+  const [sourceIndex, setSourceIndex] = useState(0);
+
+  useEffect(() => {
+    setSourceIndex(0);
+  }, [sourceKey]);
+
+  const activeSource = sources[sourceIndex];
+
+  return (
+    <div className={`${className} artwork-shell artwork-${variant} artwork-${game.launcher}`}>
+      {activeSource ? (
+        <img
+          alt=""
+          src={activeSource}
+          onError={() => {
+            setSourceIndex((current) => (current + 1 < sources.length ? current + 1 : sources.length));
+          }}
+        />
+      ) : null}
+      {!activeSource ? (
+        <div className="artwork-fallback" aria-hidden="true">
+          <span>{launcherLabel(game.launcher)}</span>
+          <strong>{gameInitials(game.title)}</strong>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function sessionStateLabel(session: GameSession) {
@@ -462,6 +612,7 @@ export function App() {
   >({});
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [eventFeedMode, setEventFeedMode] = useState<"websocket" | "polling">("websocket");
+  const gamepadStateRef = useRef<Record<string, boolean>>({});
 
   const deferredSearch = useDeferredValue(search);
 
@@ -763,6 +914,127 @@ export function App() {
     [config.pinnedGameIds, gamesById, launchChecksByGameId, snapshot.status],
   );
   const missingPinnedCount = pinnedEntries.filter((entry) => entry.missing).length;
+  const selectedGameIndex = selectedGame
+    ? filteredGames.findIndex((game) => game.id === selectedGame.id)
+    : -1;
+
+  const moveSelectedGame = useEffectEvent((direction: -1 | 1) => {
+    if (filteredGames.length === 0) {
+      return;
+    }
+
+    const baseIndex = selectedGameIndex >= 0 ? selectedGameIndex : 0;
+    const nextIndex = (baseIndex + direction + filteredGames.length) % filteredGames.length;
+    setSelectedGameId(filteredGames[nextIndex]!.id);
+  });
+
+  const launchSelectedGame = useEffectEvent(() => {
+    if (!selectedGame || !selectedLaunchCheck?.canLaunch || busyAction !== null) {
+      return;
+    }
+
+    void launchGame(selectedGame.id);
+  });
+
+  const pinSelectedGame = useEffectEvent(() => {
+    if (!selectedGame || busyAction !== null || savingPinnedGameId === selectedGame.id) {
+      return;
+    }
+
+    void togglePinnedGame(selectedGame.id);
+  });
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.altKey || event.ctrlKey || event.metaKey || isTypingTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveSelectedGame(-1);
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveSelectedGame(1);
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        launchSelectedGame();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        pinSelectedGame();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [launchSelectedGame, moveSelectedGame, pinSelectedGame]);
+
+  useEffect(() => {
+    let frameId = 0;
+
+    const updatePressedState = (key: string, active: boolean, action: () => void) => {
+      const wasActive = gamepadStateRef.current[key] ?? false;
+
+      if (active && !wasActive) {
+        action();
+      }
+
+      gamepadStateRef.current[key] = active;
+    };
+
+    const pollGamepad = () => {
+      if (!isTypingTarget(document.activeElement)) {
+        const gamepad = navigator.getGamepads?.().find(Boolean);
+
+        if (gamepad) {
+          const horizontalAxis = gamepad.axes[0] ?? 0;
+
+          updatePressedState(
+            "left",
+            Boolean(gamepad.buttons[14]?.pressed) || horizontalAxis < -0.65,
+            () => moveSelectedGame(-1),
+          );
+          updatePressedState(
+            "right",
+            Boolean(gamepad.buttons[15]?.pressed) || horizontalAxis > 0.65,
+            () => moveSelectedGame(1),
+          );
+          updatePressedState(
+            "launch",
+            Boolean(gamepad.buttons[0]?.pressed),
+            () => launchSelectedGame(),
+          );
+          updatePressedState(
+            "pin",
+            Boolean(gamepad.buttons[3]?.pressed),
+            () => pinSelectedGame(),
+          );
+        } else {
+          gamepadStateRef.current = {};
+        }
+      }
+
+      frameId = window.requestAnimationFrame(pollGamepad);
+    };
+
+    frameId = window.requestAnimationFrame(pollGamepad);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [launchSelectedGame, moveSelectedGame, pinSelectedGame]);
 
   async function runAction(action: RuntimeAction) {
     setBusyAction(action);
@@ -1101,6 +1373,151 @@ export function App() {
         </section>
       ) : null}
 
+      <section className="browse-stage panel">
+        <div className="panel-header browse-stage-header">
+          <div>
+            <p className="panel-kicker">Browse</p>
+            <h2>Game Browser</h2>
+          </div>
+          <span className="badge">
+            {filteredGames.length} visible
+          </span>
+        </div>
+        <div className="toolbar browse-stage-toolbar">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search titles"
+          />
+          <select
+            value={launcherFilter}
+            onChange={(event) => setLauncherFilter(event.target.value as LauncherId | "all")}
+          >
+            <option value="all">All launchers</option>
+            <option value="steam">Steam</option>
+            <option value="ubisoft-connect">Ubisoft Connect</option>
+            <option value="manual">Manual</option>
+          </select>
+        </div>
+        <div className="catalog-overview browse-stage-overview">
+          <span className="chip">
+            Real Steam {catalogInsights.realSteamCount}
+          </span>
+          <span className="chip">
+            Real Ubisoft {catalogInsights.realUbisoftCount}
+          </span>
+          <span className="chip">
+            Pinned {config.pinnedGameIds.length}
+          </span>
+          {catalogInsights.unknownCount > 0 ? (
+            <span className="chip">
+              Unknown {catalogInsights.unknownCount}
+            </span>
+          ) : null}
+        </div>
+        {selectedGame ? (
+          <div className="browse-spotlight">
+            <GameArtwork className="spotlight-art" game={selectedGame} variant="hero" />
+            <div className="spotlight-content">
+              <div className="chip-row spotlight-chips">
+                <span className="chip">{launcherLabel(selectedGame.launcher)}</span>
+                <span className="chip">{installStateLabel(selectedGame.installState)}</span>
+                <span className="chip">
+                  {discoverySourceLabel(selectedGame.guestMetadata.discoverySource)}
+                </span>
+              </div>
+              <h2 className="spotlight-title">{selectedGame.title}</h2>
+              <p className="spotlight-description">{gameDescription(selectedGame)}</p>
+              <p
+                className={`spotlight-status ${
+                  selectedLaunchCheck?.canLaunch ? "spotlight-status-ready" : "spotlight-status-blocked"
+                }`}
+              >
+                {gameStatusSummary(
+                  selectedGame,
+                  Boolean(selectedLaunchCheck?.canLaunch),
+                  selectedLaunchCheck?.reason,
+                )}
+              </p>
+              <div className="spotlight-meta">
+                <div>
+                  <span>Launch path</span>
+                  <strong>{launchStrategyLabel(selectedGame.guestMetadata.launchStrategy)}</strong>
+                </div>
+                <div>
+                  <span>Last seen</span>
+                  <strong>{formatTime(selectedGame.lastSeenAt)}</strong>
+                </div>
+                <div>
+                  <span>Launch mode</span>
+                  <strong>{selectedGame.guestMetadata.lastLaunchMode ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span>Observed process</span>
+                  <strong>{selectedGame.guestMetadata.lastObservedProcessName ?? "n/a"}</strong>
+                </div>
+              </div>
+              <div className="spotlight-actions">
+                <button
+                  disabled={filteredGames.length < 2}
+                  onClick={() => moveSelectedGame(-1)}
+                >
+                  Previous
+                </button>
+                <button
+                  disabled={filteredGames.length < 2}
+                  onClick={() => moveSelectedGame(1)}
+                >
+                  Next
+                </button>
+                <button
+                  disabled={busyAction !== null || savingPinnedGameId === selectedGame.id}
+                  onClick={() => void togglePinnedGame(selectedGame.id)}
+                >
+                  {config.pinnedGameIds.includes(selectedGame.id) ? "Unpin" : "Pin"}
+                </button>
+                <button
+                  disabled={busyAction !== null || !selectedLaunchCheck?.canLaunch}
+                  onClick={() => void launchGame(selectedGame.id)}
+                >
+                  Launch
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="empty-state browse-empty-state">No games match the current filter.</p>
+        )}
+        <div className="browse-strip" role="list" aria-label="Game browser">
+          {filteredGames.map((game) => {
+            const launchCheck =
+              launchChecksByGameId.get(game.id) ?? canLaunchGame(game, snapshot.status);
+
+            return (
+              <button
+                key={game.id}
+                className={`browse-card ${selectedGame?.id === game.id ? "browse-card-selected" : ""}`}
+                onClick={() => setSelectedGameId(game.id)}
+                type="button"
+              >
+                <GameArtwork className="browse-card-art" game={game} variant="poster" />
+                <div className="browse-card-body">
+                  <div>
+                    <p className="browse-card-title">{game.title}</p>
+                    <p className="browse-card-subtitle">
+                      {launcherLabel(game.launcher)} · {discoverySourceLabel(game.guestMetadata.discoverySource)}
+                    </p>
+                  </div>
+                  <span className={`browse-card-state ${launchCheck.canLaunch ? "launch-ready" : "launch-blocked"}`}>
+                    {launchCheck.canLaunch ? "Ready" : "Blocked"}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="grid">
         <article className="panel">
           <div className="panel-header">
@@ -1297,43 +1714,8 @@ export function App() {
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Library</p>
-              <h2>Game Catalog</h2>
+              <h2>Game Details</h2>
             </div>
-          </div>
-          <div className="toolbar">
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search titles"
-            />
-            <select
-              value={launcherFilter}
-              onChange={(event) => setLauncherFilter(event.target.value as LauncherId | "all")}
-            >
-              <option value="all">All launchers</option>
-              <option value="steam">Steam</option>
-              <option value="ubisoft-connect">Ubisoft Connect</option>
-              <option value="manual">Manual</option>
-            </select>
-          </div>
-          <div className="catalog-overview">
-            <span className="chip">
-              Real Steam {catalogInsights.realSteamCount}
-            </span>
-            <span className="chip">
-              Sample Steam {catalogInsights.sampleSteamCount}
-            </span>
-            <span className="chip">
-              Real Ubisoft {catalogInsights.realUbisoftCount}
-            </span>
-            <span className="chip">
-              Sample Ubisoft {catalogInsights.sampleUbisoftCount}
-            </span>
-            {catalogInsights.unknownCount > 0 ? (
-              <span className="chip">
-                Unknown {catalogInsights.unknownCount}
-              </span>
-            ) : null}
           </div>
           {pinnedEntries.length > 0 ? (
             <div className="pinned-games">
@@ -1475,6 +1857,9 @@ export function App() {
                 })}
               </div>
             </div>
+          ) : null}
+          {!selectedGame && filteredGames.length === 0 ? (
+            <p className="empty-state">Run a scan or change the filter to browse games.</p>
           ) : null}
           {selectedGame ? (
             <div className="selected-game-card">
@@ -1641,72 +2026,6 @@ export function App() {
               </div>
             </div>
           ) : null}
-          <div className="game-list">
-            {filteredGames.map((game) => {
-              const launchCheck =
-                launchChecksByGameId.get(game.id) ?? canLaunchGame(game, snapshot.status);
-
-              return (
-              <div
-                key={game.id}
-                className={`game-card ${selectedGame?.id === game.id ? "game-card-selected" : ""}`}
-                onClick={() => setSelectedGameId(game.id)}
-              >
-                <div>
-                  <p className="game-title">{game.title}</p>
-                  <p className="game-subtitle">
-                    {game.launcher} · {game.installState} · {discoverySourceLabel(game.guestMetadata.discoverySource)}
-                  </p>
-                  {game.guestMetadata.installRoot ? (
-                    <p className="game-path">{game.guestMetadata.installRoot}</p>
-                  ) : null}
-                  <p className="game-meta-line">
-                    Launch path {launchStrategyLabel(game.guestMetadata.launchStrategy)}
-                  </p>
-                  <p className="game-meta-line">
-                    {launchCheck.canLaunch ? "Ready to launch" : launchCheck.reason}
-                  </p>
-                  {game.guestMetadata.lastLaunchDetail ? (
-                    <p className="game-meta-line">{game.guestMetadata.lastLaunchDetail}</p>
-                  ) : null}
-                </div>
-                <div className="game-footer">
-                  <div className="chip-row">
-                    {game.compatibilityFlags.map((flag) => (
-                      <span key={flag} className="chip">
-                        {flag}
-                      </span>
-                    ))}
-                    {game.guestMetadata.steamLibraryRoot ? (
-                      <span className="chip">library {game.guestMetadata.steamLibraryRoot}</span>
-                    ) : null}
-                    {game.guestMetadata.lastLaunchMode ? (
-                      <span className="chip">mode {game.guestMetadata.lastLaunchMode}</span>
-                    ) : null}
-                  </div>
-                  <button
-                    disabled={busyAction !== null || savingPinnedGameId === game.id}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void togglePinnedGame(game.id);
-                    }}
-                  >
-                    {config.pinnedGameIds.includes(game.id) ? "Unpin" : "Pin"}
-                  </button>
-                  <button
-                    disabled={busyAction !== null || !launchCheck.canLaunch}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void launchGame(game.id);
-                    }}
-                  >
-                    Launch
-                  </button>
-                </div>
-              </div>
-            )})}
-            {filteredGames.length === 0 ? <p className="empty-state">No games match the filter.</p> : null}
-          </div>
         </article>
 
         <article className="panel">

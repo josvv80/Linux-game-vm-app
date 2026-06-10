@@ -75,6 +75,7 @@ It already includes:
   - runtime controls
   - provider and guest configuration
   - game catalog browsing
+  - browse-first spotlight view with artwork-backed game cards
   - launch actions
   - diagnostics and recovery guidance
   - session timeline visibility
@@ -111,6 +112,7 @@ Today the project can already demonstrate:
 - active-session-aware remote-play diagnostics so the UI does not claim the stream is playable after a session has already ended
 - recent session history with one-click relaunch for completed or failed sessions when the guest is ready again
 - selected-game detail view with explicit launch-readiness and blocked-launch reasons
+- controller-friendly browsing with large artwork cards, spotlighted selection, directional navigation, and direct launch from the browse surface
 - persistent pinned games for quick launch and faster repeat access
 - pinned games stay visible even when a later scan does not currently rediscover them
 - pinned games can be reordered and missing pins can be cleared in bulk

@@ -114,6 +114,15 @@ The current working assumption is:
   - failed POST requests now also try to surface the backend `message` field instead of only showing a bare status code
 - Verified after the empty-body POST fix:
   - `npm run build --workspace @game-vm-hub/host-web` passed
+- Reworked the host web UI toward a browse-first, controller-friendly surface:
+  - `apps/host-web/src/App.tsx` now renders a full-width game browser ahead of the admin grid
+  - the new browse surface adds a spotlight panel, large poster cards, derived art sources for Steam titles, generated fallback art for titles without cover assets, and richer summary copy for the selected game
+  - directional keyboard navigation now moves between visible games, `Enter` launches the selected game, and browser gamepad polling now supports left/right browse, `A` to launch, and `Y` to pin/unpin
+  - the lower library panel now focuses on pinned games and deeper selected-game diagnostics instead of duplicating the entire catalog list
+  - `apps/host-web/src/styles.css` now includes browse-stage layout, artwork treatment, poster rail behavior, spotlight blocks, and stronger focus-visible styling for couch-distance navigation
+- Updated `README.md` so the current feature list mentions the browse-first artwork surface and controller-friendly navigation.
+- Verified after the browse-first controller UI update:
+  - `npm run build --workspace @game-vm-hub/host-web` passed
 
 ### 2026-06-08
 

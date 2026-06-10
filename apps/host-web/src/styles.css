@@ -39,6 +39,13 @@ button:disabled {
   cursor: wait;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(241, 143, 1, 0.9);
+  outline-offset: 3px;
+}
+
 input,
 select {
   width: 100%;
@@ -112,6 +119,214 @@ select {
   display: grid;
   grid-template-columns: 1.05fr 1.2fr 0.95fr;
   gap: 1rem;
+}
+
+.browse-stage {
+  margin-bottom: 1rem;
+  min-height: 0;
+}
+
+.browse-stage-header {
+  margin-bottom: 0.75rem;
+}
+
+.browse-stage-toolbar {
+  margin-bottom: 0.75rem;
+}
+
+.browse-stage-overview {
+  margin-bottom: 1rem;
+}
+
+.browse-spotlight {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(0, 1.2fr);
+  gap: 1rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.spotlight-content {
+  display: grid;
+  align-content: start;
+  gap: 0.9rem;
+}
+
+.spotlight-title,
+.browse-card-title {
+  margin: 0;
+}
+
+.spotlight-description {
+  margin: 0;
+  max-width: 56rem;
+  color: #ddd3c6;
+  font-size: 1.02rem;
+  line-height: 1.5;
+}
+
+.spotlight-status {
+  margin: 0;
+  padding: 0.95rem 1rem;
+  border-radius: 16px;
+  font-weight: 700;
+}
+
+.spotlight-status-ready {
+  color: #d8f5df;
+  background: rgba(34, 120, 66, 0.22);
+}
+
+.spotlight-status-blocked {
+  color: #ffd0cf;
+  background: rgba(180, 38, 38, 0.25);
+}
+
+.spotlight-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.spotlight-meta div {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.spotlight-meta span {
+  color: #a8afb8;
+  font-size: 0.82rem;
+}
+
+.spotlight-meta strong {
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.spotlight-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.browse-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 240px);
+  gap: 0.9rem;
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+}
+
+.browse-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.7rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  color: inherit;
+}
+
+.browse-card:hover,
+.browse-card:focus-visible,
+.browse-card-selected {
+  border-color: rgba(241, 143, 1, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(241, 143, 1, 0.1);
+}
+
+.browse-card-body {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.browse-card-subtitle {
+  margin: 0.3rem 0 0;
+  color: #b7bec6;
+  font-size: 0.84rem;
+}
+
+.browse-card-state {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.22rem 0.65rem;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.browse-empty-state {
+  padding: 1rem 0 0.35rem;
+}
+
+.artwork-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.artwork-shell img,
+.artwork-fallback {
+  width: 100%;
+  height: 100%;
+}
+
+.artwork-shell img {
+  display: block;
+  object-fit: cover;
+}
+
+.artwork-fallback {
+  display: grid;
+  align-content: end;
+  gap: 0.35rem;
+  padding: 1rem;
+  color: #f8f0dd;
+}
+
+.artwork-fallback span {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.artwork-fallback strong {
+  font-size: 2rem;
+}
+
+.artwork-hero {
+  min-height: 280px;
+}
+
+.artwork-poster {
+  aspect-ratio: 3 / 4;
+}
+
+.artwork-steam .artwork-fallback {
+  background:
+    linear-gradient(180deg, transparent 10%, rgba(5, 11, 22, 0.95) 100%),
+    linear-gradient(135deg, #3567c3 0%, #0f2744 52%, #09131d 100%);
+}
+
+.artwork-ubisoft-connect .artwork-fallback {
+  background:
+    linear-gradient(180deg, transparent 10%, rgba(10, 10, 22, 0.95) 100%),
+    linear-gradient(135deg, #2f9ef1 0%, #1d3f7a 40%, #09111e 100%);
+}
+
+.artwork-manual .artwork-fallback {
+  background:
+    linear-gradient(180deg, transparent 10%, rgba(21, 12, 8, 0.95) 100%),
+    linear-gradient(135deg, #f18f01 0%, #6f2d15 48%, #130f11 100%);
 }
 
 .simulation-section {
@@ -588,6 +803,14 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .browse-spotlight {
+    grid-template-columns: 1fr;
+  }
+
+  .spotlight-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .simulation-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -628,6 +851,14 @@ select {
 
   .catalog-overview {
     grid-template-columns: repeat(2, max-content);
+  }
+
+  .browse-strip {
+    grid-auto-columns: minmax(180px, 72vw);
+  }
+
+  .spotlight-meta {
+    grid-template-columns: 1fr;
   }
 
   .selected-game-grid {
